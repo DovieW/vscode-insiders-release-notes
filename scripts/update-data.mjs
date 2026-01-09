@@ -167,64 +167,6 @@ async function rebuildBuildIndexes(repo) {
   await writeFile(HOME_PATH, home, "utf8");
 }
 
-function buildPageMarkdown({
-  repo,
-  defaultBranch,
-  fromSha,
-  toSha,
-  compareUrl,
-  totalCommits,
-  commits,
-  entries,
-  generatedAt,
-  pullRequests,
-  aiReleaseNotes,
-}) {
-  const title = `Build ${shortSha(toSha)} — ${todayUtc()}`;
-  const warning = totalCommits > commits.length
-    ? `\n> ⚠️ GitHub compare returned ${commits.length} of ${totalCommits} commits for this range. This changelog may be incomplete.\n`
-    : "";
-
-  const changelogLines = entries.map((e) => `- ${e.subject} ([commit](${e.url}))`);
-
-  const prLines = (pullRequests || []).map((pr) => {
-    const author = pr?.user?.login ? ` (@${mdEscapeInline(pr.user.login)})` : "";
-    return `- [#${pr.number}](${pr.html_url}) ${mdEscapeInline(pr.title)}${author}`;
-  });
-
-  const aiBlock = aiReleaseNotes
-    ? `## Release notes (AI-generated)\n\n${aiReleaseNotes.trim()}\n`
-    : "";
-
-  const aiHint = !aiReleaseNotes
-    ? "\n> Tip: set `OPENAI_API_KEY` to generate a polished, per-build release notes section.\n"
-    : "";
-
-  return `---
-title: "${mdEscapeInline(title)}"
----
-
-# ${mdEscapeInline(title)}
-
-**Repository:** [${mdEscapeInline(repo)}](https://github.com/${repo})
-**Branch:** \`${mdEscapeInline(defaultBranch)}\`
-**Build commit:** [${mdEscapeInline(shortSha(toSha))}](https://github.com/${repo}/commit/${toSha})
-**Range:** \`${mdEscapeInline(shortSha(fromSha))}\` → \`${mdEscapeInline(shortSha(toSha))}\`
-**Compare:** [view on GitHub](${compareUrl})
-**Generated:** ${generatedAt}
-${warning}
-
-${aiBlock}${aiHint}
-## Merged PRs
-
-${prLines.length ? prLines.join("\n") : "(no PRs detected for this range)"}
-
-## Changelog
-
-${changelogLines.length ? changelogLines.join("\n") : "(no entries)"}
-`;
-}
-
 function buildAiPrompt({ repo, defaultBranch, fromSha, toSha, compareUrl, pullRequests }) {
   // Keep it deterministic and “release-notes shaped”. Output should be markdown only.
   const prPayload = (pullRequests || []).map((pr) => ({
