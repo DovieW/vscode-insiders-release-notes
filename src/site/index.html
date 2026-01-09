@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Insiders Changes</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="header">
+      <div class="container">
+        <div class="title-row">
+          <h1>Insiders Changes</h1>
+          <div class="badge" id="repoBadge">Loading…</div>
+        </div>
+        <p class="subtitle">
+          A lightweight, GitHub Pages-friendly view of “what changed since the last update”.
+        </p>
+
+        <div class="controls" role="region" aria-label="Filters">
+          <label class="control">
+            <span class="label">Release run</span>
+            <select id="runSelect" class="select" disabled></select>
+          </label>
+
+          <label class="control">
+            <span class="label">Search</span>
+            <input id="searchInput" class="input" type="search" placeholder="Filter PR titles, e.g. chat, terminal, accessibility…" />
+          </label>
+        </div>
+
+        <div class="meta" id="runMeta"></div>
+        <div class="labels" id="labels"></div>
+      </div>
+    </header>
+
+    <main class="container">
+      <section class="panel">
+        <div class="panel-header">
+          <h2>Pull requests</h2>
+          <div class="panel-count" id="count"></div>
+        </div>
+        <ol class="pr-list" id="prList" aria-live="polite"></ol>
+      </section>
+
+      <footer class="footer">
+        <p>
+          Data is generated from the GitHub API and may be incomplete if compare ranges are truncated.
+        </p>
+      </footer>
+    </main>
+
+    <script type="module" src="app.js"></script>
+  </body>
+</html>
