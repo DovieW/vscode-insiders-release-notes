@@ -16,8 +16,13 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  build:
+  deploy:
     runs-on: ubuntu-latest
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -33,7 +38,8 @@ jobs:
 
       - name: Update data snapshot
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Built-in token for this workflow run
+          GITHUB_TOKEN: ${{ github.token }}
           TARGET_REPO: microsoft/vscode
         run: npm run update-data
 
