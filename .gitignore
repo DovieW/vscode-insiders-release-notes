@@ -1,4 +1,7 @@
 .env
 node_modules/
-dist/
+.vitepress/
+docs/.vitepress/cache/
+docs/.vitepress/dist/
+.out/
 .DS_Store

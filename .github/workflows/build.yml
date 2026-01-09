@@ -1,0 +1,97 @@
+name: Generate changelog for an Insiders build
+
+on:
+  workflow_dispatch:
+    inputs:
+      buildSha:
+        description: "VS Code Insiders build commit SHA (from update service commits feed)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "insiders-build"
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: master
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Generate build changelog page (AI required)
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          TARGET_REPO: microsoft/vscode
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_MODEL: gpt-4.1-mini
+        run: npm run update-data -- --build-sha "${{ inputs.buildSha }}"
+
+      - name: Commit generated files
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data docs
+          if git diff --cached --quiet; then
+            echo "No changes to commit (unexpected)."
+            exit 1
+          fi
+          tag=$(node -e "console.log(JSON.parse(require('fs').readFileSync('.out/build.json','utf8')).tag)")
+          git commit -m "chore(insiders): ${tag}"
+          git push
+
+      - name: Create GitHub Release (AI notes only)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag=$(node -e "console.log(JSON.parse(require('fs').readFileSync('.out/build.json','utf8')).tag)")
+          title=$(node -e "console.log(JSON.parse(require('fs').readFileSync('.out/build.json','utf8')).title)")
+          notes=.out/release-notes.md
+          target=$(git rev-parse HEAD)
+
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "Release $tag already exists; skipping creation."
+            exit 0
+          fi
+
+          gh release create "$tag" \
+            --title "$title" \
+            --notes-file "$notes" \
+            --target "$target" \
+            --prerelease
+
+      - name: Build site
+        run: npm run docs:build
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs/.vitepress/dist
+
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v4

@@ -1,71 +1,118 @@
-name: Update data and deploy Pages
+name: Poll for new VS Code Insiders builds
 
 on:
   workflow_dispatch:
   schedule:
-    # Daily at 06:15 UTC
-    - cron: "15 6 * * *"
+    # Every 30 minutes (best-effort)
+    - cron: "*/30 * * * *"
 
 permissions:
-  contents: write
-  pages: write
-  id-token: write
+  contents: read
+  actions: write
 
 concurrency:
-  group: "pages"
+  group: "insiders-poll"
   cancel-in-progress: false
 
 jobs:
-  deploy:
+  poll:
     runs-on: ubuntu-latest
-
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: master
 
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: npm
 
-      - name: Install
-        run: npm ci
-
-      - name: Update data snapshot
+      - name: Determine builds to process (max 3)
+        id: builds
         env:
-          # Built-in token for this workflow run
-          GITHUB_TOKEN: ${{ github.token }}
-          TARGET_REPO: microsoft/vscode
-        run: npm run update-data
-
-      - name: Commit data changes (if any)
+          INSIDERS_COMMITS_FEED: https://update.code.visualstudio.com/api/commits/insider
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add data
-          if git diff --cached --quiet; then
-            echo "No data changes to commit."
-          else
-            git commit -m "chore(data): update snapshot"
-            git push
-          fi
+          node - <<'NODE'
+          const fs = require('fs');
 
-      - name: Build site
-        run: npm run build
+          const feed = process.env.INSIDERS_COMMITS_FEED;
+          async function main() {
+            const state = JSON.parse(fs.readFileSync('data/insiders-state.json', 'utf8'));
+            const last = state.lastProcessedBuildSha;
 
-      - name: Configure Pages
-        uses: actions/configure-pages@v5
+            const res = await fetch(feed, { headers: { 'User-Agent': 'insiders-changes-site' } });
+            if (!res.ok) throw new Error(`Failed to fetch insiders commits feed: ${res.status} ${res.statusText}`);
+            const commits = await res.json();
+            if (!Array.isArray(commits) || commits.length === 0) throw new Error('Empty insiders commits feed');
 
-      - name: Upload artifact
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: dist
+            let builds = [];
+            if (!last) {
+              builds = [commits[0]]; // bootstrap: generate latest build
+            } else {
+              const idx = commits.indexOf(last);
+              if (idx === -1) {
+                builds = [commits[0]];
+              } else {
+                const unprocessedNewer = commits.slice(0, idx); // newest-first
+                builds = unprocessedNewer.reverse().slice(0, 3); // oldest-first, cap 3
+              }
+            }
 
-      - name: Deploy
-        id: deployment
-        uses: actions/deploy-pages@v4
+            const out = builds.filter(Boolean);
+            console.log(`Found ${out.length} build(s) to process.`);
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, `builds=${JSON.stringify(out)}\n`);
+          }
+
+          main().catch((err) => {
+            console.error(err);
+            process.exit(1);
+          });
+          NODE
+
+      - name: Dispatch build workflow
+        if: ${{ steps.builds.outputs.builds != '[]' }}
+        env:
+          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+          BUILDS: ${{ steps.builds.outputs.builds }}
+        run: |
+          node - <<'NODE'
+          const builds = JSON.parse(process.env.BUILDS || '[]');
+          if (!builds.length) {
+            console.log('No builds to dispatch.');
+            return;
+          }
+
+          async function dispatch(buildSha) {
+            const url = `https://api.github.com/repos/${process.env.GH_REPO}/actions/workflows/build.yml/dispatches`;
+            const res = await fetch(url, {
+              method: 'POST',
+              headers: {
+                'Accept': 'application/vnd.github+json',
+                'Authorization': `Bearer ${process.env.GH_TOKEN}`,
+                'X-GitHub-Api-Version': '2022-11-28',
+              },
+              body: JSON.stringify({
+                ref: 'master',
+                inputs: { buildSha },
+              }),
+            });
+
+            if (!res.ok) {
+              const text = await res.text();
+              throw new Error(`Dispatch failed for ${buildSha}: ${res.status} ${res.statusText} ${text}`);
+            }
+          }
+
+          (async () => {
+            for (const sha of builds) {
+              console.log(`Dispatching build workflow for ${sha}...`);
+              await dispatch(sha);
+            }
+          })().catch((err) => {
+            console.error(err);
+            process.exit(1);
+          });
+          NODE

@@ -1,19 +1,42 @@
 #!/usr/bin/env node
 
 import "dotenv/config";
+import OpenAI from "openai";
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 const DATA_DIR = new URL("../data/", import.meta.url).pathname;
-const RUNS_DIR = join(DATA_DIR, "runs");
-const STATE_PATH = join(DATA_DIR, "state.json");
-const INDEX_PATH = join(DATA_DIR, "index.json");
+const STATE_PATH = join(DATA_DIR, "insiders-state.json");
+
+const DOCS_DIR = new URL("../docs/", import.meta.url).pathname;
+const BUILDS_DIR = join(DOCS_DIR, "builds");
+const BUILDS_INDEX_PATH = join(BUILDS_DIR, "index.md");
+const HOME_PATH = join(DOCS_DIR, "index.md");
 
 const TARGET_REPO = process.env.TARGET_REPO || "microsoft/vscode";
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
 
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4.1-mini";
+
+const OUT_DIR = join(new URL("../", import.meta.url).pathname, ".out");
+const OUT_RELEASE_NOTES_PATH = join(OUT_DIR, "release-notes.md");
+const OUT_BUILD_META_PATH = join(OUT_DIR, "build.json");
+
+const INSIDERS_COMMITS_FEED = "https://update.code.visualstudio.com/api/commits/insider";
+
 function shortSha(sha) {
   return (sha || "").slice(0, 7);
+}
+
+function parseArgs(argv) {
+  const out = {};
+  for (let i = 2; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === "--build-sha") out.buildSha = argv[++i];
+    else if (a === "--previous-sha") out.previousSha = argv[++i];
+  }
+  return out;
 }
 
 async function readJsonIfExists(path) {
@@ -57,153 +80,409 @@ async function getCompare(repo, from, to) {
   return githubJson(`https://api.github.com/repos/${repo}/compare/${from}...${to}`);
 }
 
+async function getCommit(repo, sha) {
+  return githubJson(`https://api.github.com/repos/${repo}/commits/${sha}`);
+}
+
+async function getRepoFileJsonViaRaw(repo, sha, path) {
+  const url = `https://raw.githubusercontent.com/${repo}/${sha}/${path}`;
+  const res = await fetch(url, { headers: { "User-Agent": "insiders-changes-site" } });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`Failed to fetch ${url}: ${res.status} ${res.statusText}: ${body}`);
+  }
+  return res.json();
+}
+
+async function getInsidersBuildCommits() {
+  const res = await fetch(INSIDERS_COMMITS_FEED, { headers: { "User-Agent": "insiders-changes-site" } });
+  if (!res.ok) throw new Error(`Failed to fetch insiders commits feed: ${res.status} ${res.statusText}`);
+  const list = await res.json();
+  if (!Array.isArray(list) || !list.length) throw new Error("Insiders commits feed returned no commits.");
+  return list;
+}
+
 async function getPullsForCommit(repo, sha) {
-  // This endpoint historically required a preview header.
-  return githubJson(`https://api.github.com/repos/${repo}/commits/${sha}/pulls`, {
-    Accept: "application/vnd.github.groot-preview+json",
-  });
+  // https://docs.github.com/en/rest/commits/commits?apiVersion=2022-11-28#list-pull-requests-associated-with-a-commit
+  return githubJson(
+    `https://api.github.com/repos/${repo}/commits/${sha}/pulls`,
+    {
+      // Some GitHub instances historically required the groot preview for this endpoint.
+      Accept: "application/vnd.github+json,application/vnd.github.groot-preview+json",
+    },
+  );
+}
+
+async function getPullRequest(repo, number) {
+  return githubJson(`https://api.github.com/repos/${repo}/pulls/${number}`);
 }
 
 function todayUtc() {
   return new Date().toISOString().slice(0, 10);
 }
 
-async function rebuildIndex(repo) {
-  const files = await readdir(RUNS_DIR);
-  const runFiles = files.filter((f) => f.endsWith(".json"));
-
-  const runs = [];
-  for (const f of runFiles) {
-    const full = join(RUNS_DIR, f);
-    const data = await readJsonIfExists(full);
-    if (!data?.id) continue;
-
-    runs.push({
-      id: data.id,
-      title: data.title,
-      generatedAt: data.generatedAt,
-      prCount: data.prCount,
-      from: data.from,
-      to: data.to,
-      compareUrl: data.compareUrl,
-      path: `runs/${f}`,
-    });
-  }
-
-  runs.sort((a, b) => String(b.generatedAt).localeCompare(String(a.generatedAt)));
-
-  const index = {
-    repo,
-    updatedAt: new Date().toISOString(),
-    runs,
-  };
-
-  await writeFile(INDEX_PATH, JSON.stringify(index, null, 2) + "\n", "utf8");
+function mdEscapeInline(text) {
+  // Keep it simple: avoid accidentally breaking markdown links/lists.
+  return String(text || "").replaceAll("\r", "").trim();
 }
 
-async function main() {
-  await mkdir(RUNS_DIR, { recursive: true });
+async function rebuildBuildIndexes(repo) {
+  await mkdir(BUILDS_DIR, { recursive: true });
 
-  const state = await readJsonIfExists(STATE_PATH);
+  const files = (await readdir(BUILDS_DIR))
+    .filter((f) => f.endsWith(".md") && f !== "index.md")
+    .filter((f) => f.includes("-insider"));
+  const sorted = files.sort((a, b) => b.localeCompare(a));
 
-  const repoInfo = await getRepoInfo(TARGET_REPO);
-  const defaultBranch = repoInfo?.default_branch || "main";
-
-  const latestSha = await getBranchHeadSha(TARGET_REPO, defaultBranch);
-  if (!latestSha) throw new Error("Failed to resolve latest branch head SHA.");
-
-  if (!state?.lastSha) {
-    const initState = {
-      repo: TARGET_REPO,
-      defaultBranch,
-      lastSha: latestSha,
-      initializedAt: new Date().toISOString(),
-      note: "Initialized without generating a run (no prior baseline).",
-    };
-
-    await mkdir(DATA_DIR, { recursive: true });
-    await writeFile(STATE_PATH, JSON.stringify(initState, null, 2) + "\n", "utf8");
-    await rebuildIndex(TARGET_REPO);
-    console.log(`Initialized state at ${shortSha(latestSha)} (${TARGET_REPO}@${defaultBranch}).`);
-    return;
+  // Group by minor version when filename contains something like: YYYY-MM-DD_HH-mmZ_1.109.0-insider_<sha>.md
+  const groups = new Map();
+  for (const f of sorted) {
+    const slug = f.replace(/\.md$/, "");
+    const parts = slug.split("_");
+    const versionPart = parts.find((p) => /\d+\.\d+\.\d+-insider/.test(p)) || "other";
+    const minor = versionPart !== "other" ? versionPart.split(".").slice(0, 2).join(".") : "Other";
+    if (!groups.has(minor)) groups.set(minor, []);
+    groups.get(minor).push({ slug, version: versionPart });
   }
 
-  const fromSha = state.lastSha;
-  const toSha = latestSha;
-
-  if (fromSha === toSha) {
-    await rebuildIndex(TARGET_REPO);
-    console.log(`No change since last run (still at ${shortSha(toSha)}).`);
-    return;
+  const groupOrder = Array.from(groups.keys()).sort((a, b) => (a === "Other" ? 1 : b === "Other" ? -1 : b.localeCompare(a)));
+  const lines = [];
+  if (!sorted.length) {
+    lines.push("Build pages will appear here after the workflow generates the first build.");
+  } else {
+    for (const g of groupOrder) {
+      lines.push(`## ${mdEscapeInline(g)}`);
+      for (const item of groups.get(g)) {
+        lines.push(`- [${mdEscapeInline(item.slug)}](/builds/${encodeURIComponent(item.slug)})`);
+      }
+      lines.push("");
+    }
   }
 
-  const compare = await getCompare(TARGET_REPO, fromSha, toSha);
-  const commits = compare?.commits || [];
-  const totalCommits = typeof compare?.total_commits === "number" ? compare.total_commits : commits.length;
-  const compareUrl = compare?.html_url || `https://github.com/${TARGET_REPO}/compare/${fromSha}...${toSha}`;
+  const buildsIndex = `# Builds\n\n${lines.join("\n").trim()}\n`;
+  await writeFile(BUILDS_INDEX_PATH, buildsIndex, "utf8");
 
-  const prMap = new Map();
+  const latestSlug = sorted[0]?.replace(/\.md$/, "") || null;
+  const home = `---\nlayout: home\n\ntitle: Insiders Changelog\n---\n\n# Insiders Changelog\n\nThis site publishes a **per-build changelog** for VS Code Insiders-style snapshots.\n\n- Repository: **${mdEscapeInline(repo)}**\n- Latest build: ${latestSlug ? `[/builds/${mdEscapeInline(latestSlug)}](/builds/${encodeURIComponent(latestSlug)})` : "(none yet)"}\n\nGo to **Builds** for the full list.\n`;
+  await writeFile(HOME_PATH, home, "utf8");
+}
+
+function buildPageMarkdown({
+  repo,
+  defaultBranch,
+  fromSha,
+  toSha,
+  compareUrl,
+  totalCommits,
+  commits,
+  entries,
+  generatedAt,
+  pullRequests,
+  aiReleaseNotes,
+}) {
+  const title = `Build ${shortSha(toSha)} — ${todayUtc()}`;
+  const warning = totalCommits > commits.length
+    ? `\n> ⚠️ GitHub compare returned ${commits.length} of ${totalCommits} commits for this range. This changelog may be incomplete.\n`
+    : "";
+
+  const changelogLines = entries.map((e) => `- ${e.subject} ([commit](${e.url}))`);
+
+  const prLines = (pullRequests || []).map((pr) => {
+    const author = pr?.user?.login ? ` (@${mdEscapeInline(pr.user.login)})` : "";
+    return `- [#${pr.number}](${pr.html_url}) ${mdEscapeInline(pr.title)}${author}`;
+  });
+
+  const aiBlock = aiReleaseNotes
+    ? `## Release notes (AI-generated)\n\n${aiReleaseNotes.trim()}\n`
+    : "";
+
+  const aiHint = !aiReleaseNotes
+    ? "\n> Tip: set `OPENAI_API_KEY` to generate a polished, per-build release notes section.\n"
+    : "";
+
+  return `---
+title: "${mdEscapeInline(title)}"
+---
+
+# ${mdEscapeInline(title)}
+
+**Repository:** [${mdEscapeInline(repo)}](https://github.com/${repo})
+**Branch:** \`${mdEscapeInline(defaultBranch)}\`
+**Build commit:** [${mdEscapeInline(shortSha(toSha))}](https://github.com/${repo}/commit/${toSha})
+**Range:** \`${mdEscapeInline(shortSha(fromSha))}\` → \`${mdEscapeInline(shortSha(toSha))}\`
+**Compare:** [view on GitHub](${compareUrl})
+**Generated:** ${generatedAt}
+${warning}
+
+${aiBlock}${aiHint}
+## Merged PRs
+
+${prLines.length ? prLines.join("\n") : "(no PRs detected for this range)"}
+
+## Changelog
+
+${changelogLines.length ? changelogLines.join("\n") : "(no entries)"}
+`;
+}
+
+function buildAiPrompt({ repo, defaultBranch, fromSha, toSha, compareUrl, pullRequests }) {
+  // Keep it deterministic and “release-notes shaped”. Output should be markdown only.
+  const prPayload = (pullRequests || []).map((pr) => ({
+    number: pr.number,
+    title: pr.title,
+    url: pr.html_url,
+    author: pr?.user?.login || null,
+    merged_at: pr.merged_at || null,
+    labels: Array.isArray(pr.labels) ? pr.labels.map((l) => l?.name).filter(Boolean) : [],
+    body: pr.body ? String(pr.body).slice(0, 4000) : "",
+  }));
+
+  const input = {
+    repo,
+    defaultBranch,
+    range: { fromSha, toSha, compareUrl },
+    pullRequests: prPayload,
+  };
+
+  return {
+    instructions:
+      "You write concise, high-signal release notes for developers. " +
+      "Given a list of merged PRs for a single build, produce clean Markdown suitable for a VitePress page. " +
+      "Rules: (1) No preamble, just markdown content. (2) Prefer short sections with bullet points. " +
+      "(3) Each bullet should include a PR link like [#12345](url). " +
+      "(4) Group by theme/area when obvious from titles/labels; otherwise use a simple 'Highlights' + 'Other changes' structure. " +
+      "(5) Call out breaking changes if clearly indicated, otherwise omit a breaking section.",
+    input: JSON.stringify(input),
+  };
+}
+
+async function generateAiReleaseNotes({ repo, defaultBranch, fromSha, toSha, compareUrl, pullRequests }) {
+  if (!OPENAI_API_KEY) {
+    throw new Error("OPENAI_API_KEY is required to generate release notes.");
+  }
+  if (!pullRequests?.length) {
+    throw new Error("No PRs found for this build range; refusing to generate empty release notes.");
+  }
+
+  const client = new OpenAI({ apiKey: OPENAI_API_KEY });
+  const { instructions, input } = buildAiPrompt({ repo, defaultBranch, fromSha, toSha, compareUrl, pullRequests });
+
+  const response = await client.responses.create({
+    model: OPENAI_MODEL,
+    instructions,
+    input,
+  });
+
+  const text = (response?.output_text || "").trim();
+  if (!text) throw new Error("OpenAI returned empty release notes.");
+  return text;
+}
+
+async function collectMergedPullRequestsForRange({ repo, commits }) {
+  const prNumbers = new Set();
 
   for (const c of commits) {
     const sha = c?.sha;
     if (!sha) continue;
-
-    const pulls = await getPullsForCommit(TARGET_REPO, sha);
-    for (const pr of pulls || []) {
-      if (!pr?.number) continue;
-      if (prMap.has(pr.number)) continue;
-
-      prMap.set(pr.number, {
-        number: pr.number,
-        title: pr.title,
-        url: pr.html_url,
-        author: pr.user?.login || null,
-        mergedAt: pr.merged_at || null,
-        labels: Array.isArray(pr.labels) ? pr.labels.map((l) => l?.name).filter(Boolean) : [],
-      });
+    try {
+      const pulls = await getPullsForCommit(repo, sha);
+      for (const pr of pulls || []) {
+        if (typeof pr?.number === "number") prNumbers.add(pr.number);
+      }
+    } catch (err) {
+      // Best-effort: if this endpoint is unavailable/rate-limited, don't fail the whole run.
+      console.warn(`Failed to resolve PRs for commit ${shortSha(sha)}: ${err?.message || err}`);
     }
   }
 
-  const prs = Array.from(prMap.values()).sort((a, b) => b.number - a.number);
-  const prCount = prs.length;
+  const prs = [];
+  for (const n of prNumbers) {
+    try {
+      const pr = await getPullRequest(repo, n);
+      if (pr?.merged_at) prs.push(pr);
+    } catch (err) {
+      console.warn(`Failed to fetch PR #${n}: ${err?.message || err}`);
+    }
+  }
 
-  const generatedAt = new Date().toISOString();
-  const id = `${todayUtc()}_${shortSha(fromSha)}-${shortSha(toSha)}`;
-  const title = `${todayUtc()} — ${shortSha(fromSha)}…${shortSha(toSha)} (${prCount} PRs)`;
+  prs.sort((a, b) => String(b.merged_at || "").localeCompare(String(a.merged_at || "")));
+  return prs;
+}
 
-  const run = {
-    id,
-    title,
+function formatUtcParts(iso) {
+  const d = new Date(iso);
+  const y = String(d.getUTCFullYear());
+  const m = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(d.getUTCDate()).padStart(2, "0");
+  const hh = String(d.getUTCHours()).padStart(2, "0");
+  const mm = String(d.getUTCMinutes()).padStart(2, "0");
+  return { date: `${y}-${m}-${day}`, time: `${hh}-${mm}Z`, display: `${y}-${m}-${day} ${hh}:${mm} UTC` };
+}
+
+function buildPageMarkdown({
+  repo,
+  defaultBranch,
+  fromSha,
+  toSha,
+  compareUrl,
+  totalCommits,
+  commits,
+  pullRequests,
+  version,
+  buildTimeDisplay,
+  aiReleaseNotes,
+}) {
+  const title = `VS Code Insiders ${mdEscapeInline(version)} — ${mdEscapeInline(buildTimeDisplay)}`;
+  const warning = totalCommits > commits.length
+    ? `\n> ⚠️ GitHub compare returned ${commits.length} of ${totalCommits} commits for this range. This changelog may be incomplete.\n`
+    : "";
+
+  const prLines = (pullRequests || []).map((pr) => `- [#${pr.number}](${pr.html_url}) ${mdEscapeInline(pr.title)}`);
+
+  return `---
+title: "${mdEscapeInline(title)}"
+---
+
+# ${mdEscapeInline(title)}
+
+${aiReleaseNotes.trim()}
+
+---
+
+## Merged PRs
+
+${prLines.join("\n")}
+
+## Build details
+
+- **Upstream repo:** [${mdEscapeInline(repo)}](https://github.com/${repo})
+- **Branch:** \`${mdEscapeInline(defaultBranch)}\`
+- **Build commit:** [${mdEscapeInline(shortSha(toSha))}](https://github.com/${repo}/commit/${toSha})
+- **Previous build commit:** [${mdEscapeInline(shortSha(fromSha))}](https://github.com/${repo}/commit/${fromSha})
+- **Compare:** [view on GitHub](${compareUrl})
+${warning}
+`;
+}
+
+async function main() {
+  await mkdir(DATA_DIR, { recursive: true });
+  await mkdir(BUILDS_DIR, { recursive: true });
+  await mkdir(OUT_DIR, { recursive: true });
+
+  const args = parseArgs(process.argv);
+  const buildSha = args.buildSha;
+  if (!buildSha) {
+    throw new Error("Missing required --build-sha <sha> argument.");
+  }
+
+  const state = (await readJsonIfExists(STATE_PATH)) || { repo: TARGET_REPO };
+
+  const insidersCommits = await getInsidersBuildCommits();
+  const buildIndex = insidersCommits.indexOf(buildSha);
+  if (buildIndex === -1) {
+    throw new Error(`Build SHA not found in insiders feed: ${buildSha}`);
+  }
+
+  const previousSha = args.previousSha || insidersCommits[buildIndex + 1];
+  if (!previousSha) {
+    throw new Error(`No previous build SHA available for ${buildSha} (it may be the oldest in the feed).`);
+  }
+
+  const repoInfo = await getRepoInfo(TARGET_REPO);
+  const defaultBranch = repoInfo?.default_branch || "main";
+
+  // If we've already processed this build or a newer one, do nothing.
+  if (state?.lastProcessedBuildSha) {
+    const lastIdx = insidersCommits.indexOf(state.lastProcessedBuildSha);
+    if (lastIdx !== -1 && lastIdx <= buildIndex) {
+      await rebuildBuildIndexes(TARGET_REPO);
+      console.log(`Build already processed (state at ${shortSha(state.lastProcessedBuildSha)}). Skipping ${shortSha(buildSha)}.`);
+      return;
+    }
+  }
+
+  const buildCommit = await getCommit(TARGET_REPO, buildSha);
+  const buildIso = buildCommit?.commit?.committer?.date || buildCommit?.commit?.author?.date;
+  if (!buildIso) throw new Error(`Unable to resolve commit date for build SHA ${buildSha}.`);
+  const timeParts = formatUtcParts(buildIso);
+
+  const pkg = await getRepoFileJsonViaRaw(TARGET_REPO, buildSha, "package.json");
+  const baseVersion = pkg?.version;
+  if (!baseVersion) throw new Error("Unable to resolve VS Code version from package.json at build SHA.");
+  const version = `${baseVersion}-insider`;
+
+  const compare = await getCompare(TARGET_REPO, previousSha, buildSha);
+  const commits = compare?.commits || [];
+  const totalCommits = typeof compare?.total_commits === "number" ? compare.total_commits : commits.length;
+  const compareUrl = compare?.html_url || `https://github.com/${TARGET_REPO}/compare/${previousSha}...${buildSha}`;
+
+  const pullRequests = await collectMergedPullRequestsForRange({ repo: TARGET_REPO, commits });
+  if (pullRequests.length > 100) {
+    throw new Error(`Too many PRs for this build (${pullRequests.length}). Refusing to generate; handle manually.`);
+  }
+
+  const aiReleaseNotes = await generateAiReleaseNotes({
     repo: TARGET_REPO,
     defaultBranch,
-    from: fromSha,
-    to: toSha,
+    fromSha: previousSha,
+    toSha: buildSha,
     compareUrl,
-    generatedAt,
-    commitsReturned: commits.length,
-    totalCommits,
-    wasTruncated: totalCommits > commits.length,
-    prCount,
-    prs,
-  };
+    pullRequests,
+  });
 
-  const filename = `${todayUtc()}_${shortSha(fromSha)}-${shortSha(toSha)}.json`;
-  const runPath = join(RUNS_DIR, filename);
-  await writeFile(runPath, JSON.stringify(run, null, 2) + "\n", "utf8");
+  const slug = `${timeParts.date}_${timeParts.time}_${version}_${shortSha(buildSha)}`;
+
+  const md = buildPageMarkdown({
+    repo: TARGET_REPO,
+    defaultBranch,
+    fromSha: previousSha,
+    toSha: buildSha,
+    compareUrl,
+    totalCommits,
+    commits,
+    pullRequests,
+    version,
+    buildTimeDisplay: timeParts.display,
+    aiReleaseNotes,
+  });
+
+  const filename = `${slug}.md`;
+  const outPath = join(BUILDS_DIR, filename);
+  await writeFile(outPath, md, "utf8");
+
+  // Emit workflow artifacts for creating a GitHub Release (body should be AI notes only).
+  await writeFile(OUT_RELEASE_NOTES_PATH, aiReleaseNotes.trim() + "\n", "utf8");
+
+  const tag = `insiders/${version}/${timeParts.date.replaceAll("-", "")}-${timeParts.time.replaceAll("-", "")}/${shortSha(buildSha)}`;
+  const releaseTitle = `VS Code Insiders ${version} — ${timeParts.display}`;
+
+  const meta = {
+    tag,
+    title: releaseTitle,
+    buildSha,
+    previousSha,
+    version,
+    slug,
+    notesFile: OUT_RELEASE_NOTES_PATH,
+    pageFile: `docs/builds/${filename}`,
+  };
+  await writeFile(OUT_BUILD_META_PATH, JSON.stringify(meta, null, 2) + "\n", "utf8");
 
   const nextState = {
     repo: TARGET_REPO,
     defaultBranch,
-    lastSha: toSha,
-    updatedAt: generatedAt,
+    lastProcessedBuildSha: buildSha,
+    lastProcessedVersion: version,
+    lastProcessedAt: new Date().toISOString(),
   };
   await writeFile(STATE_PATH, JSON.stringify(nextState, null, 2) + "\n", "utf8");
 
-  await rebuildIndex(TARGET_REPO);
+  await rebuildBuildIndexes(TARGET_REPO);
 
-  console.log(`Wrote run: ${filename}`);
-  console.log(`PRs: ${prCount} | Compare: ${compareUrl}`);
-  if (run.wasTruncated) {
+  console.log(`Wrote build page: docs/builds/${filename}`);
+  console.log(`PRs: ${pullRequests.length} | Compare: ${compareUrl}`);
+  console.log(`Release tag: ${tag}`);
+  if (totalCommits > commits.length) {
     console.warn(`Warning: compare commit list appears truncated (${commits.length}/${totalCommits}).`);
   }
 }

@@ -1,0 +1,8 @@
+{
+  "repo": "microsoft/vscode",
+  "defaultBranch": "main",
+  "lastProcessedBuildSha": null,
+  "lastProcessedVersion": null,
+  "lastProcessedAt": null,
+  "note": "This file is updated by the build workflow after successfully generating a changelog page + GitHub Release."
+}

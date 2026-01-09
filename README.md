@@ -1,41 +1,71 @@
-# Insiders Changes (GitHub Pages)
+# Insiders Changelog (GitHub Pages)
 
-This project periodically captures “what changed since the last run” for a target GitHub repo (default: `microsoft/vscode`) and publishes a static, searchable UI to GitHub Pages.
+This project generates a **per-build changelog page** for *actual VS Code Insiders builds* (not just “latest commits”) and publishes them as a **VitePress** site to GitHub Pages.
+
+Each build page contains:
+
+- **AI-written release notes** (OpenAI `gpt-4.1-mini`)
+- The list of **merged PRs included in that build**
+
+Additionally, each build creates a **GitHub Release** so users can subscribe to email notifications by watching releases.
 
 ## How it works
 
-- `scripts/update-data.mjs`:
-  - Reads `data/state.json` (last processed commit SHA)
-  - Fetches the latest SHA on the default branch
-  - Computes a compare range and resolves commits → PRs
-  - Writes a snapshot to `data/runs/*.json` and updates `data/index.json`
+- `scripts/update-data.mjs`
+  - Runs **for a specific Insiders build SHA** (from VS Code’s update service)
+  - Computes the range **previous build SHA → build SHA**
+  - Collects the merged PRs included in that range (commit → associated PRs)
+  - **Fails if PRs > 100** (manual handling)
+  - Calls OpenAI (`gpt-4.1-mini`) to generate the release notes (required)
+  - Writes a build page to `docs/builds/*.md` and updates indexes
+  - Writes `.out/build.json` + `.out/release-notes.md` for the workflow to publish a GitHub Release
 
-- `scripts/build-site.mjs`:
-  - Copies `src/site/` → `dist/`
-  - Copies `data/` → `dist/data/`
+- VitePress (`docs/`)
+  - Builds the static site from Markdown pages
+  - Deployed via GitHub Actions to GitHub Pages
 
-The GitHub Actions workflow runs on a schedule, commits updated JSON back to the repo, then deploys `dist/` to GitHub Pages.
+- GitHub Actions
+  - **Poll workflow** (every 30 minutes): detects new Insiders builds and dispatches build jobs (max 3 backfills)
+  - **Build workflow**: generates the page + GitHub Release + deploys Pages
 
 ## Local usage
 
-1. Create `.env` from `.env.example` (optional but recommended for higher rate limits)
-2. Run:
-   - `npm run update-data`
-   - `npm run build`
-   - `npm run preview`
+1. Create `.env` from `.env.example`
+  - `OPENAI_API_KEY` is required (release notes are required)
+  - `GITHUB_TOKEN` is recommended (avoids GitHub API rate limits)
+2. Pick an Insiders build SHA from: `https://update.code.visualstudio.com/api/commits/insider`
+3. Run:
+  - `npm run update-data -- --build-sha <sha>`
+  - `npm run docs:build`
+  - `npm run docs:preview`
 
-### Troubleshooting (WSL / odd npm shell config)
+### WSL note (UNC path issue)
 
-If `npm run …` tries to execute via `cmd.exe` (UNC path error), run the scripts directly:
+If `npm run docs:build` tries to start **CMD.EXE** and fails with something like:
 
-- `node scripts/update-data.mjs`
-- `node scripts/build-site.mjs`
-- `node scripts/preview.mjs`
+- `UNC paths are not supported`
+- `'vitepress' is not recognized...`
+
+…you’re likely running the **Windows** `npm` inside WSL (e.g. `which npm` shows `/mnt/c/Program Files/nodejs/npm`).
+
+Fix: use a Linux Node/npm install inside WSL (e.g. `nvm`, `apt`, or Linuxbrew) so `which npm` points to a Linux path.
 
 ## Configuration
 
 - `TARGET_REPO` (default `microsoft/vscode`)
 - `GITHUB_TOKEN` (recommended)
+- `OPENAI_API_KEY` (required)
+- `OPENAI_MODEL` (default `gpt-4.1-mini`)
+
+## Email notifications
+
+Each generated build page also creates a **GitHub Release**.
+
+Users can get emails by:
+
+1. Clicking **Watch** on the repo
+2. Choosing **Custom**
+3. Enabling **Releases**
 
 ## Security note
 
