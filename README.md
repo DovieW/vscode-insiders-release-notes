@@ -35,7 +35,7 @@ Sometimes you may want to regenerate a page for an existing build SHA (e.g. afte
 Recommended: dispatch the build workflow with `force=true`:
 
 - Workflow: **Generate changelog for an Insiders build**
-- Input: `buildSha` = the commit SHA from the Insiders feed
+- Input: `buildSha` = the commit SHA from the Insiders feed (full SHA or a unique prefix)
 - Input: `force` = `true`
 
 This regenerates the Markdown and rebuilds/deploys Pages. It also avoids moving `data/insiders-state.json` backwards when rebuilding an older build.

@@ -29,6 +29,30 @@ function shortSha(sha) {
   return (sha || "").slice(0, 7);
 }
 
+function resolveShaPrefixOrThrow({ shas, input, label }) {
+  const value = String(input || "").trim();
+  if (!value) throw new Error(`Missing ${label}.`);
+
+  // Fast path: full SHA in feed.
+  if (shas.includes(value)) return value;
+
+  // Common UX: user provides a git-style short SHA. Allow unique prefixes.
+  const matches = shas.filter((s) => s.startsWith(value));
+  if (matches.length === 1) return matches[0];
+  if (matches.length > 1) {
+    const sample = matches.slice(0, 8).map(shortSha).join(", ");
+    throw new Error(
+      `${label} '${value}' is ambiguous (${matches.length} matches in insiders feed). ` +
+      `Please provide a longer prefix. Matches include: ${sample}${matches.length > 8 ? ", ..." : ""}`,
+    );
+  }
+
+  throw new Error(
+    `${label} '${value}' was not found in the insiders feed. ` +
+    `Make sure you're using a commit SHA from ${INSIDERS_COMMITS_FEED}.`,
+  );
+}
+
 function parseArgs(argv) {
   const out = {};
   for (let i = 2; i < argv.length; i++) {
@@ -328,24 +352,22 @@ async function main() {
   await mkdir(OUT_DIR, { recursive: true });
 
   const args = parseArgs(process.argv);
-  const buildSha = args.buildSha;
-  if (!buildSha) {
-    throw new Error("Missing required --build-sha <sha> argument.");
-  }
+  const requestedBuildSha = args.buildSha;
+  if (!requestedBuildSha) throw new Error("Missing required --build-sha <sha> argument.");
   const force = Boolean(args.force);
 
   const state = (await readJsonIfExists(STATE_PATH)) || { repo: TARGET_REPO };
 
   const insidersCommits = await getInsidersBuildCommits();
+  const buildSha = resolveShaPrefixOrThrow({ shas: insidersCommits, input: requestedBuildSha, label: "Build SHA" });
   const buildIndex = insidersCommits.indexOf(buildSha);
-  if (buildIndex === -1) {
-    throw new Error(`Build SHA not found in insiders feed: ${buildSha}`);
-  }
+  if (buildIndex === -1) throw new Error(`Internal error: resolved build SHA missing from feed: ${buildSha}`);
 
-  const previousSha = args.previousSha || insidersCommits[buildIndex + 1];
-  if (!previousSha) {
+  const requestedPreviousSha = args.previousSha || insidersCommits[buildIndex + 1];
+  if (!requestedPreviousSha) {
     throw new Error(`No previous build SHA available for ${buildSha} (it may be the oldest in the feed).`);
   }
+  const previousSha = resolveShaPrefixOrThrow({ shas: insidersCommits, input: requestedPreviousSha, label: "Previous SHA" });
 
   const repoInfo = await getRepoInfo(TARGET_REPO);
   const defaultBranch = repoInfo?.default_branch || "main";

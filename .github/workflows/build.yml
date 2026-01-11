@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       buildSha:
-        description: "VS Code Insiders build commit SHA (from update service commits feed)"
+        description: "VS Code Insiders build commit SHA (full SHA or unique prefix; from the update service commits feed)"
         required: true
         type: string
       force:
