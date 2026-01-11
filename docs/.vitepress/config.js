@@ -13,7 +13,7 @@ function buildLabelFromSlug(slug) {
   const date = parts[0];
   const timePart = parts[1];
   const timeUi = formatUtcTimeForUi(timePart);
-  if (date && timeUi) return `${date} (${timeUi})`;
+  if (date && timeUi) return `${date} - ${timeUi}`;
   return String(slug || '');
 }
 

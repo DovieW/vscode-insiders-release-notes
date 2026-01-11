@@ -59,7 +59,15 @@ function formatLocalTimeAmPm(utcIso) {
 function buildLocalLabel({ date, utcIso }) {
   const localTime = formatLocalTimeAmPm(utcIso);
   if (!localTime) return date;
-  return `${date} (${localTime})`;
+  return `${date} - ${localTime}`;
+}
+
+function setSidebarLinkTextPreservingMarkup(a, text) {
+  // VitePress sidebar links typically contain spans that are styled for sizing and active states.
+  // If we replace `a.textContent`, we remove that markup and can break styling.
+  const el = a.querySelector('.text') || a.querySelector('span');
+  if (el) el.textContent = text;
+  else a.textContent = text;
 }
 
 function updateBuildTitles() {
@@ -79,7 +87,7 @@ function updateBuildTitles() {
   for (const a of sidebarLinks) {
     const info = parseBuildFromHref(a.getAttribute('href'));
     if (!info) continue;
-    a.textContent = buildLocalLabel(info);
+    setSidebarLinkTextPreservingMarkup(a, buildLocalLabel(info));
   }
 }
 
