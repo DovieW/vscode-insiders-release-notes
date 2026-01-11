@@ -2,6 +2,21 @@ import { readdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { defineConfig } from 'vitepress';
 
+function formatUtcTimeForUi(timePart) {
+  const m = /^([0-9]{2})-([0-9]{2})Z$/.exec(String(timePart || ''));
+  if (!m) return String(timePart || '');
+  return `${m[1]}:${m[2]}Z`;
+}
+
+function buildLabelFromSlug(slug) {
+  const parts = String(slug || '').split('_');
+  const date = parts[0];
+  const timePart = parts[1];
+  const timeUi = formatUtcTimeForUi(timePart);
+  if (date && timeUi) return `${date} (${timeUi})`;
+  return String(slug || '');
+}
+
 function groupBuildPages() {
   const buildsDir = join(process.cwd(), 'docs', 'builds');
   if (!existsSync(buildsDir)) return [];
@@ -21,7 +36,7 @@ function groupBuildPages() {
 
     if (!groups.has(minor)) groups.set(minor, []);
     groups.get(minor).push({
-      text: slug,
+      text: buildLabelFromSlug(slug),
       link: `/builds/${slug}`,
     });
   }

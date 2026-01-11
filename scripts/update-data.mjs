@@ -154,7 +154,7 @@ async function rebuildBuildIndexes(repo) {
       lines.push(`## ${mdEscapeInline(g)}`);
       for (const item of groups.get(g)) {
         // IMPORTANT: avoid leading '/' so project pages work under a base path.
-        lines.push(`- [${mdEscapeInline(item.slug)}](./${encodeURIComponent(item.slug)})`);
+        lines.push(`- [${mdEscapeInline(buildLabelFromSlug(item.slug))}](./${encodeURIComponent(item.slug)})`);
       }
       lines.push("");
     }
@@ -164,7 +164,7 @@ async function rebuildBuildIndexes(repo) {
   await writeFile(BUILDS_INDEX_PATH, buildsIndex, "utf8");
 
   const latestSlug = sorted[0]?.replace(/\.md$/, "") || null;
-  const home = `---\nlayout: home\n\ntitle: Insiders Changelog\n---\n\n# Insiders Changelog\n\nThis site publishes a **per-build changelog** for VS Code Insiders-style snapshots.\n\n- Repository: **${mdEscapeInline(repo)}**\n- Latest build: ${latestSlug ? `[builds/${mdEscapeInline(latestSlug)}](./builds/${encodeURIComponent(latestSlug)})` : "(none yet)"}\n\nGo to **Builds** for the full list.\n`;
+  const home = `---\nlayout: home\n\ntitle: Insiders Changelog\n---\n\n# Insiders Changelog\n\nThis site publishes a **per-build changelog** for VS Code Insiders-style snapshots.\n\n- Repository: **${mdEscapeInline(repo)}**\n- Latest build: ${latestSlug ? `[${mdEscapeInline(buildLabelFromSlug(latestSlug))}](./builds/${encodeURIComponent(latestSlug)})` : "(none yet)"}\n\nGo to **Builds** for the full list.\n`;
   await writeFile(HOME_PATH, home, "utf8");
 }
 
@@ -191,10 +191,11 @@ function buildAiPrompt({ repo, defaultBranch, fromSha, toSha, compareUrl, pullRe
     instructions:
       "You write concise, high-signal release notes for developers. " +
       "Given a list of merged PRs for a single build, produce clean Markdown suitable for a VitePress page. " +
-      "Rules: (1) No preamble, just markdown content. (2) Prefer short sections with bullet points. " +
-      "(3) Each bullet should include a PR link like [#12345](url). " +
-      "(4) Group by theme/area when obvious from titles/labels; otherwise use a simple 'Highlights' + 'Other changes' structure. " +
-      "(5) Call out breaking changes if clearly indicated, otherwise omit a breaking section.",
+      "Rules: (1) No preamble, just markdown content. (2) Do NOT use H1 headings (#); the page already has a title. Start sections at H2 (##) or below. " +
+      "(3) Prefer short sections with bullet points. " +
+      "(4) Each bullet should include a PR link like [#12345](url). " +
+      "(5) Group by theme/area when obvious from titles/labels; otherwise use a simple 'Highlights' + 'Other changes' structure. " +
+      "(6) Call out breaking changes if clearly indicated, otherwise omit a breaking section.",
     input: JSON.stringify(input),
   };
 }
@@ -262,6 +263,24 @@ function formatUtcParts(iso) {
   return { date: `${y}-${m}-${day}`, time: `${hh}-${mm}Z`, display: `${y}-${m}-${day} ${hh}:${mm} UTC` };
 }
 
+function formatUtcTimeForUi(timePart) {
+  // Example: "00-50Z" -> "00:50Z" (more readable, and can be swapped client-side to local time).
+  const m = /^([0-9]{2})-([0-9]{2})Z$/.exec(String(timePart || ""));
+  if (!m) return String(timePart || "");
+  return `${m[1]}:${m[2]}Z`;
+}
+
+function buildLabelFromSlug(slug) {
+  // Expected slug format:
+  // YYYY-MM-DD_HH-mmZ_1.109.0-insider_7c62052
+  const parts = String(slug || "").split("_");
+  const date = parts[0];
+  const timePart = parts[1];
+  const timeUi = formatUtcTimeForUi(timePart);
+  if (date && timeUi) return `${date} (${timeUi})`;
+  return String(slug || "");
+}
+
 function buildPageMarkdown({
   repo,
   defaultBranch,
@@ -272,10 +291,10 @@ function buildPageMarkdown({
   commits,
   pullRequests,
   version,
-  buildTimeDisplay,
+  buildTitleUtc,
   aiReleaseNotes,
 }) {
-  const title = `VS Code Insiders ${mdEscapeInline(version)} — ${mdEscapeInline(buildTimeDisplay)}`;
+  const title = mdEscapeInline(buildTitleUtc);
   const warning = totalCommits > commits.length
     ? `\n> ⚠️ GitHub compare returned ${commits.length} of ${totalCommits} commits for this range. This changelog may be incomplete.\n`
     : "";
@@ -283,10 +302,14 @@ function buildPageMarkdown({
   const prLines = (pullRequests || []).map((pr) => `- [#${pr.number}](${pr.html_url}) ${mdEscapeInline(pr.title)}`);
 
   return `---
-title: "${mdEscapeInline(title)}"
+title: "${title}"
 ---
 
-# ${mdEscapeInline(title)}
+# ${title}
+
+Commit: [${mdEscapeInline(shortSha(toSha))}](https://github.com/${repo}/commit/${toSha}) · Previous: [${mdEscapeInline(shortSha(fromSha))}](https://github.com/${repo}/commit/${fromSha}) · Compare: [GitHub](${compareUrl})  
+Version: \`${mdEscapeInline(version)}\` · Branch: \`${mdEscapeInline(defaultBranch)}\` · Upstream: [${mdEscapeInline(repo)}](https://github.com/${repo})
+${warning}
 
 ${aiReleaseNotes.trim()}
 
@@ -295,15 +318,6 @@ ${aiReleaseNotes.trim()}
 ## Merged PRs
 
 ${prLines.join("\n")}
-
-## Build details
-
-- **Upstream repo:** [${mdEscapeInline(repo)}](https://github.com/${repo})
-- **Branch:** \`${mdEscapeInline(defaultBranch)}\`
-- **Build commit:** [${mdEscapeInline(shortSha(toSha))}](https://github.com/${repo}/commit/${toSha})
-- **Previous build commit:** [${mdEscapeInline(shortSha(fromSha))}](https://github.com/${repo}/commit/${fromSha})
-- **Compare:** [view on GitHub](${compareUrl})
-${warning}
 `;
 }
 
@@ -348,6 +362,7 @@ async function main() {
   const buildIso = buildCommit?.commit?.committer?.date || buildCommit?.commit?.author?.date;
   if (!buildIso) throw new Error(`Unable to resolve commit date for build SHA ${buildSha}.`);
   const timeParts = formatUtcParts(buildIso);
+  const buildTitleUtc = `${timeParts.date} (${formatUtcTimeForUi(timeParts.time)})`;
 
   const pkg = await getRepoFileJsonViaRaw(TARGET_REPO, buildSha, "package.json");
   const baseVersion = pkg?.version;
@@ -385,7 +400,7 @@ async function main() {
     commits,
     pullRequests,
     version,
-    buildTimeDisplay: timeParts.display,
+    buildTitleUtc,
     aiReleaseNotes,
   });
 
