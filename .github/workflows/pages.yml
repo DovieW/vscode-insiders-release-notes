@@ -82,7 +82,7 @@ jobs:
           const builds = JSON.parse(process.env.BUILDS || '[]');
           if (!builds.length) {
             console.log('No builds to dispatch.');
-            return;
+            process.exit(0);
           }
 
           async function dispatch(buildSha) {

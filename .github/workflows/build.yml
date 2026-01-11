@@ -65,6 +65,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          if [ ! -f .out/build.json ]; then
+            echo "No .out/build.json found (likely a redeploy / build already processed). Skipping release creation."
+            exit 0
+          fi
+
           tag=$(node -e "console.log(JSON.parse(require('fs').readFileSync('.out/build.json','utf8')).tag)")
           title=$(node -e "console.log(JSON.parse(require('fs').readFileSync('.out/build.json','utf8')).title)")
           notes=.out/release-notes.md
