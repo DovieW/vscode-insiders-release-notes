@@ -1,0 +1,8 @@
+# Use our minimal local runner image for ubuntu-latest.
+# Build it once with: docker build -t vscode-insiders-act:node20 -f act/Dockerfile act
+-P ubuntu-latest=vscode-insiders-act:node20
+-P ubuntu-22.04=vscode-insiders-act:node20
+# Runner image is local; don't try to pull it from a registry.
+--pull=false
+# Uncomment if you hit cross-arch issues:
+# --container-architecture linux/amd64

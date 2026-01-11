@@ -6,3 +6,7 @@ docs/.vitepress/dist/
 docs/.vitepress/config.mjs
 .out/
 .DS_Store
+
+# act (local GitHub Actions runner)
+.act/
+

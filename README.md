@@ -65,6 +65,25 @@ If `npm run docs:build` tries to start **CMD.EXE** and fails with something like
 
 Fix: use a Linux Node/npm install inside WSL (e.g. `nvm`, `apt`, or Linuxbrew) so `which npm` points to a Linux path.
 
+## Local GitHub Actions testing (act)
+
+This repo is set up to work with [`act`](https://github.com/nektos/act) so you can run workflows locally.
+
+To keep images small, we use a custom runner image based on `node:20-bookworm-slim` with just the essentials (git/curl/ssh).
+
+- Runner image definition: `act/Dockerfile`
+- act defaults: `.actrc`
+- Helper script: `scripts/act.sh`
+
+Quick smoke test (runs `.github/workflows/ping.yml` locally):
+
+- `scripts/act.sh -W .github/workflows/ping.yml workflow_dispatch`
+
+Notes:
+
+- For other workflows you may need secrets (e.g. `OPENAI_API_KEY`).
+- The build workflow also deploys Pages and creates Releases in CI; for local runs you typically just want to validate the earlier steps.
+
 ## Configuration
 
 - `TARGET_REPO` (default `microsoft/vscode`)
