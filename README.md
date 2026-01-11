@@ -84,3 +84,14 @@ Users can get emails by:
 ## Security note
 
 Never commit a real token. Use GitHub Actions’ built-in `GITHUB_TOKEN` in CI, and a local `.env` for local runs.
+
+## Repo hardening (public repo)
+
+This repo is a **personal** GitHub repository, so by default **only the owner (you) can push to `master`** unless you add collaborators.
+
+To reduce foot-guns, `master` is protected with a repository **ruleset** that prevents:
+
+- **Branch deletion**
+- **Force-push / non-fast-forward updates**
+
+Note: we *don’t* require PRs for `master`, because the automation commits generated content directly to `master`.
