@@ -37,6 +37,10 @@ function groupBuildPages() {
 export default defineConfig({
   // Repo Pages: https://username.github.io/repo/
   base: '/vscode-insiders-release-notes/',
+  // Keep legacy one-off pages from being built/deployed.
+  srcExclude: [
+    'builds/2026-01-09_f8edfb1-1c97a46.md',
+  ],
   lang: 'en-US',
   title: 'Insiders Changelog',
   description: 'Per-build changelog pages for VS Code Insiders',
