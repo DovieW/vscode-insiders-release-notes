@@ -1,6 +1,6 @@
 .env
 node_modules/
-.vitepress/
+/.vitepress/
 docs/.vitepress/cache/
 docs/.vitepress/dist/
 .out/

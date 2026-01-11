@@ -54,12 +54,12 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add data docs
           if git diff --cached --quiet; then
-            echo "No changes to commit (unexpected)."
-            exit 1
+            echo "No changes to commit. Continuing (useful for redeploys / config-only changes)."
+          else
+            tag=$(node -e "console.log(JSON.parse(require('fs').readFileSync('.out/build.json','utf8')).tag)")
+            git commit -m "chore(insiders): ${tag}"
+            git push
           fi
-          tag=$(node -e "console.log(JSON.parse(require('fs').readFileSync('.out/build.json','utf8')).tag)")
-          git commit -m "chore(insiders): ${tag}"
-          git push
 
       - name: Create GitHub Release (AI notes only)
         env:
@@ -78,8 +78,7 @@ jobs:
           gh release create "$tag" \
             --title "$title" \
             --notes-file "$notes" \
-            --target "$target" \
-            --prerelease
+            --target "$target"
 
       - name: Build site
         run: npm run docs:build
