@@ -3,5 +3,6 @@ node_modules/
 /.vitepress/
 docs/.vitepress/cache/
 docs/.vitepress/dist/
+docs/.vitepress/config.mjs
 .out/
 .DS_Store
