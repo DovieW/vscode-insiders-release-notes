@@ -28,6 +28,20 @@ Additionally, each build creates a **GitHub Release** so users can subscribe to 
   - **Poll workflow** (every 30 minutes): detects new Insiders builds and dispatches build jobs (max 3 backfills)
   - **Build workflow**: generates the page + GitHub Release + deploys Pages
 
+## Force a rebuild of a specific build
+
+Sometimes you may want to regenerate a page for an existing build SHA (e.g. after changing formatting, sidebar labels, or layout).
+
+Recommended: dispatch the build workflow with `force=true`:
+
+- Workflow: **Generate changelog for an Insiders build**
+- Input: `buildSha` = the commit SHA from the Insiders feed
+- Input: `force` = `true`
+
+This regenerates the Markdown and rebuilds/deploys Pages. It also avoids moving `data/insiders-state.json` backwards when rebuilding an older build.
+
+Deleting a build page file alone usually isn't enough, because the generator uses `data/insiders-state.json` to decide what is already processed.
+
 ## Local usage
 
 1. Create `.env` from `.env.example`

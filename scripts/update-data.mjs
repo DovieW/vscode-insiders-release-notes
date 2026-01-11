@@ -35,6 +35,7 @@ function parseArgs(argv) {
     const a = argv[i];
     if (a === "--build-sha") out.buildSha = argv[++i];
     else if (a === "--previous-sha") out.previousSha = argv[++i];
+    else if (a === "--force") out.force = true;
   }
   return out;
 }
@@ -331,6 +332,7 @@ async function main() {
   if (!buildSha) {
     throw new Error("Missing required --build-sha <sha> argument.");
   }
+  const force = Boolean(args.force);
 
   const state = (await readJsonIfExists(STATE_PATH)) || { repo: TARGET_REPO };
 
@@ -348,12 +350,13 @@ async function main() {
   const repoInfo = await getRepoInfo(TARGET_REPO);
   const defaultBranch = repoInfo?.default_branch || "main";
 
-  // If we've already processed this build or a newer one, do nothing.
-  if (state?.lastProcessedBuildSha) {
+  // If we've already processed this build or a newer one, do nothing (unless forced).
+  if (!force && state?.lastProcessedBuildSha) {
     const lastIdx = insidersCommits.indexOf(state.lastProcessedBuildSha);
     if (lastIdx !== -1 && lastIdx <= buildIndex) {
       await rebuildBuildIndexes(TARGET_REPO);
       console.log(`Build already processed (state at ${shortSha(state.lastProcessedBuildSha)}). Skipping ${shortSha(buildSha)}.`);
+      console.log("Tip: re-run with --force to regenerate the page for this build SHA.");
       return;
     }
   }
@@ -426,10 +429,20 @@ async function main() {
   };
   await writeFile(OUT_BUILD_META_PATH, JSON.stringify(meta, null, 2) + "\n", "utf8");
 
+  // When force-rebuilding an older build, do NOT move the state backwards.
+  let nextLastProcessedBuildSha = buildSha;
+  if (state?.lastProcessedBuildSha) {
+    const lastIdx = insidersCommits.indexOf(state.lastProcessedBuildSha);
+    if (lastIdx !== -1 && lastIdx < buildIndex) {
+      // lastIdx smaller => state SHA is newer than the one we're processing.
+      nextLastProcessedBuildSha = state.lastProcessedBuildSha;
+    }
+  }
+
   const nextState = {
     repo: TARGET_REPO,
     defaultBranch,
-    lastProcessedBuildSha: buildSha,
+    lastProcessedBuildSha: nextLastProcessedBuildSha,
     lastProcessedVersion: version,
     lastProcessedAt: new Date().toISOString(),
   };

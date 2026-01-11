@@ -7,6 +7,11 @@ on:
         description: "VS Code Insiders build commit SHA (from update service commits feed)"
         required: true
         type: string
+      force:
+        description: "Force rebuild even if this build SHA is already processed"
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -46,7 +51,7 @@ jobs:
           TARGET_REPO: microsoft/vscode
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENAI_MODEL: gpt-4.1-mini
-        run: npm run update-data -- --build-sha "${{ inputs.buildSha }}"
+        run: npm run update-data -- --build-sha "${{ inputs.buildSha }}" ${{ inputs.force && '--force' || '' }}
 
       - name: Commit generated files
         run: |
