@@ -189,7 +189,7 @@ async function rebuildBuildIndexes(repo) {
   await writeFile(BUILDS_INDEX_PATH, buildsIndex, "utf8");
 
   const latestSlug = sorted[0]?.replace(/\.md$/, "") || null;
-  const home = `---\nlayout: home\n\ntitle: Insiders Changelog\n---\n\n# Insiders Changelog\n\nThis site publishes a **per-build changelog** for VS Code Insiders-style snapshots.\n\n- Repository: **${mdEscapeInline(repo)}**\n- Latest build: ${latestSlug ? `[${mdEscapeInline(buildLabelFromSlug(latestSlug))}](./builds/${encodeURIComponent(latestSlug)})` : "(none yet)"}\n\nGo to **Builds** for the full list.\n`;
+  const home = `---\nlayout: home\n\ntitle: Insiders Changelog\n---\n\n# Insiders Changelog\n\nThis site publishes a **per-build changelog** for VS Code Insiders-style snapshots.\n\n- Repository: **${mdEscapeInline(repo)}**\n- Latest build: ${latestSlug ? `[${mdEscapeInline(buildLabelFromSlug(latestSlug))}](./builds/${encodeURIComponent(latestSlug)})` : "(none yet)"}\n\nGo to **[Builds](./builds/)** for the full list.\n`;
   await writeFile(HOME_PATH, home, "utf8");
 }
 

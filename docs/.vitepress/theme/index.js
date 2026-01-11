@@ -1,6 +1,8 @@
 import DefaultTheme from 'vitepress/theme';
 import { inBrowser } from 'vitepress';
 
+import './custom.css';
+
 function parseBuildFromPath(pathname) {
   const marker = '/builds/';
   const idx = String(pathname || '').lastIndexOf(marker);

@@ -65,7 +65,6 @@ export default defineConfig({
     nav: [
       { text: 'Home', link: '/' },
       { text: 'Builds', link: '/builds/' },
-      { text: 'GitHub', link: 'https://github.com/DovieW/vscode-insiders-release-notes' },
     ],
 
     sidebar: {

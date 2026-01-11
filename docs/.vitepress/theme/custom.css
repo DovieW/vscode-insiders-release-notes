@@ -1,0 +1,25 @@
+/* Navbar element ordering tweaks
+ * Goal: keep only the GitHub icon (no duplicate nav link) and place it
+ * to the LEFT of the theme toggle.
+ */
+
+/* Ensure the right-side navbar controls participate in flex ordering. */
+.VPNavBar .VPNavBarExtra {
+  display: flex;
+  align-items: center;
+}
+
+/* Default theme uses these blocks on the right side of the navbar.
+ * Order them explicitly so GitHub icon appears before the theme toggle.
+ */
+.VPNavBar .VPNavBarExtra .VPNavBarSearch {
+  order: 0;
+}
+
+.VPNavBar .VPNavBarExtra .VPSocialLinks {
+  order: 1;
+}
+
+.VPNavBar .VPNavBarExtra .VPNavBarAppearance {
+  order: 2;
+}
