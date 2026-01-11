@@ -5,9 +5,10 @@ This project generates a **per-build changelog page** for *actual VS Code Inside
 Each build page contains:
 
 - **AI-written release notes** (OpenAI `gpt-4.1-mini`)
-- The list of **merged PRs included in that build**
 
-Additionally, each build creates a **GitHub Release** so users can subscribe to email notifications by watching releases.
+The workflow also creates a **GitHub Release** per build so users can subscribe to email notifications by watching releases.
+
+
 
 ## How it works
 

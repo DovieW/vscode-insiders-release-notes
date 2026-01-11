@@ -314,7 +314,6 @@ function buildPageMarkdown({
   compareUrl,
   totalCommits,
   commits,
-  pullRequests,
   version,
   buildTitleUtc,
   aiReleaseNotes,
@@ -323,8 +322,6 @@ function buildPageMarkdown({
   const warning = totalCommits > commits.length
     ? `\n> ⚠️ GitHub compare returned ${commits.length} of ${totalCommits} commits for this range. This changelog may be incomplete.\n`
     : "";
-
-  const prLines = (pullRequests || []).map((pr) => `- [#${pr.number}](${pr.html_url}) ${mdEscapeInline(pr.title)}`);
 
   return `---
 title: "${title}"
@@ -337,12 +334,6 @@ Version: \`${mdEscapeInline(version)}\` · Branch: \`${mdEscapeInline(defaultBra
 ${warning}
 
 ${aiReleaseNotes.trim()}
-
----
-
-## Merged PRs
-
-${prLines.join("\n")}
 `;
 }
 
@@ -423,7 +414,6 @@ async function main() {
     compareUrl,
     totalCommits,
     commits,
-    pullRequests,
     version,
     buildTitleUtc,
     aiReleaseNotes,
