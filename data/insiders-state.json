@@ -1,8 +1,7 @@
 {
   "repo": "microsoft/vscode",
   "defaultBranch": "main",
-  "lastProcessedBuildSha": null,
-  "lastProcessedVersion": null,
-  "lastProcessedAt": null,
-  "note": "This file is updated by the build workflow after successfully generating a changelog page + GitHub Release."
+  "lastProcessedBuildSha": "7c62052af606ba507cbb8ee90b0c22957bb175e7",
+  "lastProcessedVersion": "1.109.0-insider",
+  "lastProcessedAt": "2026-01-11T00:24:51.881Z"
 }
