@@ -218,11 +218,12 @@ function buildAiPrompt({ repo, defaultBranch, fromSha, toSha, compareUrl, pullRe
       "Given a list of merged PRs for a single build, produce clean Markdown suitable for a VitePress page. " +
       "Rules: (1) No preamble, just markdown content. (2) Do NOT use H1 headings (#); the page already has a title. Start sections at H2 (##) or below. " +
       "(3) Prefer short sections with bullet points. " +
-      "(4) Every bullet MUST begin with exactly ONE of these bold labels (and only these): **new:**, **refactor:**, **remove:**, **fix:**. " +
+      "(4) Every bullet MUST begin with exactly ONE of these bold labels (and only these): **new:**, **upgrade:**, **refactor:**, **remove:**, **fix:**. " +
       "Do not invent other labels. Use lowercase and include the colon exactly as shown. " +
+      "Use **upgrade:** specifically for dependency upgrades / version bumps. " +
       "(5) Each bullet should include a PR link like [#12345](url). " +
       "(6) Group by theme/area when obvious from titles/labels; otherwise use a simple 'Highlights' + 'Other changes' structure. " +
-      "Within EACH section, group bullets by label and order groups like this: new → refactor → remove → fix (fixes always last). " +
+      "Within EACH section, group bullets by label and order groups like this: new → upgrade → refactor → remove → fix (fixes always last). " +
       "(7) Call out breaking changes if clearly indicated, otherwise omit a breaking section.",
     input: JSON.stringify(input),
   };
