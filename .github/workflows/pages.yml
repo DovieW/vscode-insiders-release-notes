@@ -33,11 +33,15 @@ jobs:
         id: builds
         env:
           INSIDERS_COMMITS_FEED: https://update.code.visualstudio.com/api/commits/insider
+          # Gate generation so we only publish builds that are actually available for users to install.
+          # This matches what shows up in VS Code Insiders "About" once you've upgraded.
+          INSIDERS_LATEST_UPDATE_URL: https://update.code.visualstudio.com/api/update/win32-x64-user/insider/latest
         run: |
           node - <<'NODE'
           const fs = require('fs');
 
           const feed = process.env.INSIDERS_COMMITS_FEED;
+          const latestUpdateUrl = process.env.INSIDERS_LATEST_UPDATE_URL;
           async function main() {
             const state = JSON.parse(fs.readFileSync('data/insiders-state.json', 'utf8'));
             const last = state.lastProcessedBuildSha;
@@ -47,21 +51,53 @@ jobs:
             const commits = await res.json();
             if (!Array.isArray(commits) || commits.length === 0) throw new Error('Empty insiders commits feed');
 
+            // Determine which build is actually available to users right now.
+            // The update endpoint returns a JSON object whose `version` field is the commit SHA.
+            let availableSha = commits[0];
+            let availableIdx = 0;
+            if (latestUpdateUrl) {
+              const ures = await fetch(latestUpdateUrl, { headers: { 'User-Agent': 'insiders-changes-site' } });
+              if (!ures.ok) throw new Error(`Failed to fetch latest update JSON: ${ures.status} ${ures.statusText}`);
+              const latest = await ures.json();
+              if (latest && typeof latest.version === 'string') {
+                availableSha = latest.version;
+                const idx = commits.indexOf(availableSha);
+                if (idx !== -1) {
+                  availableIdx = idx;
+                } else {
+                  console.warn(`Latest update SHA ${availableSha.slice(0,7)} not found in commits feed; falling back to feed head.`);
+                  availableSha = commits[0];
+                  availableIdx = 0;
+                }
+              }
+            }
+
+            // Only consider the subset of commits that are <= latest available build.
+            // commits[0..availableIdx-1] are newer than what's available and should be ignored.
+            const availableCommits = commits.slice(availableIdx);
+
             let builds = [];
             if (!last) {
-              builds = [commits[0]]; // bootstrap: generate latest build
+              builds = [availableCommits[0]]; // bootstrap: generate latest available build
             } else {
-              const idx = commits.indexOf(last);
+              const idx = availableCommits.indexOf(last);
               if (idx === -1) {
-                builds = [commits[0]];
+                // If we've somehow processed a build newer than what's currently available, do nothing.
+                const globalIdx = commits.indexOf(last);
+                if (globalIdx !== -1 && globalIdx < availableIdx) {
+                  builds = [];
+                } else {
+                  builds = [availableCommits[0]];
+                }
               } else {
-                const unprocessedNewer = commits.slice(0, idx); // newest-first
+                const unprocessedNewer = availableCommits.slice(0, idx); // newest-first
                 builds = unprocessedNewer.reverse().slice(0, 3); // oldest-first, cap 3
               }
             }
 
             const out = builds.filter(Boolean);
             console.log(`Found ${out.length} build(s) to process.`);
+            console.log(`Latest available build: ${availableSha} (feed index ${availableIdx}).`);
             fs.appendFileSync(process.env.GITHUB_OUTPUT, `builds=${JSON.stringify(out)}\n`);
           }
 

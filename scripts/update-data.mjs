@@ -224,9 +224,51 @@ function buildAiPrompt({ repo, defaultBranch, fromSha, toSha, compareUrl, pullRe
       "(5) Each bullet should include a PR link like [#12345](url). " +
       "(6) Group by theme/area when obvious from titles/labels; otherwise use a simple 'Highlights' + 'Other changes' structure. " +
       "Within EACH section, group bullets by label and order groups like this: new → upgrade → refactor → remove → fix (fixes always last). " +
+      "Important: Do NOT create mini sections/subheadings for labels (e.g. '### New' / '### Fixes'). " +
+      "Labels must appear as prefixes on bullet lines only (e.g. '- **new:** ...'). " +
       "(7) Call out breaking changes if clearly indicated, otherwise omit a breaking section.",
     input: JSON.stringify(input),
   };
+}
+
+function normalizeAiReleaseNotes(text) {
+  // The prompt asks the model to *not* create label subheadings like "### New",
+  // but models can still do it. This normalizer converts that pattern into
+  // labeled bullets so the output stays consistent.
+  const allowed = new Set(["new", "upgrade", "refactor", "remove", "fix"]);
+  const labelHeading = /^(#{2,6})\s*\*\*?\s*(new|upgrade|refactor|remove|fix)(?:es)?\s*\*\*?\s*:??\s*$/i;
+  const labeledBullet = /^\s*-\s+\*\*(new|upgrade|refactor|remove|fix):\*\*/i;
+  const bullet = /^\s*-\s+/;
+
+  let currentLabel = null;
+  const out = [];
+
+  for (const line of String(text || "").replaceAll("\r", "").split("\n")) {
+    const m = labelHeading.exec(line.trim());
+    if (m) {
+      const l = String(m[2] || "").toLowerCase();
+      currentLabel = allowed.has(l) ? l : null;
+      // Drop the label heading line entirely.
+      continue;
+    }
+
+    if (labeledBullet.test(line)) {
+      // Reset label context once we see explicitly labeled bullets.
+      currentLabel = null;
+      out.push(line);
+      continue;
+    }
+
+    if (currentLabel && bullet.test(line) && !labeledBullet.test(line)) {
+      // Prefix unlabeled bullets under a label heading.
+      out.push(line.replace(bullet, `- **${currentLabel}:** `));
+      continue;
+    }
+
+    out.push(line);
+  }
+
+  return out.join("\n").trim();
 }
 
 async function generateAiReleaseNotes({ repo, defaultBranch, fromSha, toSha, compareUrl, pullRequests }) {
@@ -246,7 +288,7 @@ async function generateAiReleaseNotes({ repo, defaultBranch, fromSha, toSha, com
     input,
   });
 
-  const text = (response?.output_text || "").trim();
+  const text = normalizeAiReleaseNotes((response?.output_text || "").trim());
   if (!text) throw new Error("OpenAI returned empty release notes.");
   return text;
 }

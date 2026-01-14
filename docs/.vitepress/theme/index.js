@@ -4,11 +4,24 @@ import { inBrowser } from 'vitepress';
 import './custom.css';
 
 function parseBuildFromPath(pathname) {
-  const marker = '/builds/';
-  const idx = String(pathname || '').lastIndexOf(marker);
-  if (idx === -1) return null;
+  const raw = String(pathname || '');
 
-  let rest = String(pathname || '').slice(idx + marker.length);
+  // Most routes look like: /builds/<slug>
+  // But markdown links can be relative on the builds index page, e.g. ./<slug>
+  const marker = '/builds/';
+  let rest;
+  const idx = raw.lastIndexOf(marker);
+  if (idx !== -1) {
+    rest = raw.slice(idx + marker.length);
+  } else {
+    // Try to handle relative hrefs like './2026-...' or '../builds/2026-...'
+    const idx2 = raw.lastIndexOf('builds/');
+    rest = idx2 !== -1 ? raw.slice(idx2 + 'builds/'.length) : raw;
+  }
+
+  rest = rest.replace(/^\.\/+/, '');
+  rest = rest.replace(/^\.\.\/+/, '');
+  rest = rest.split('#')[0].split('?')[0];
   rest = rest.replace(/\/$/, '');
 
   // VitePress routes don't include file extensions.
@@ -29,7 +42,7 @@ function parseBuildFromPath(pathname) {
   const mm = m[3];
   const utcIso = `${date}T${hh}:${mm}:00Z`;
 
-  return { date, utcIso };
+  return { utcIso };
 }
 
 function parseBuildFromHref(href) {
@@ -58,10 +71,20 @@ function formatLocalTimeAmPm(utcIso) {
   return s.replace(/\bAM\b/g, 'am').replace(/\bPM\b/g, 'pm');
 }
 
-function buildLocalLabel({ date, utcIso }) {
+function formatLocalDateYmd(utcIso) {
+  const d = new Date(utcIso);
+  if (Number.isNaN(d.getTime())) return '';
+  const y = String(d.getFullYear());
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+function buildLocalLabel({ utcIso }) {
+  const localDate = formatLocalDateYmd(utcIso);
   const localTime = formatLocalTimeAmPm(utcIso);
-  if (!localTime) return date;
-  return `${date} - ${localTime}`;
+  if (localDate && localTime) return `${localDate} - ${localTime}`;
+  return localDate || localTime || '';
 }
 
 function setSidebarLinkTextPreservingMarkup(a, text) {
@@ -72,6 +95,16 @@ function setSidebarLinkTextPreservingMarkup(a, text) {
   else a.textContent = text;
 }
 
+function updateDocLinkLabels() {
+  // Update links inside the main page content (e.g. /builds/ index list, and home page latest build link).
+  const docLinks = document.querySelectorAll('.VPDoc a');
+  for (const a of docLinks) {
+    const info = parseBuildFromHref(a.getAttribute('href'));
+    if (!info) continue;
+    a.textContent = buildLocalLabel(info) || a.textContent;
+  }
+}
+
 function updateBuildTitles() {
   if (!inBrowser) return;
 
@@ -80,7 +113,7 @@ function updateBuildTitles() {
   if (current) {
     const h1 = document.querySelector('.VPDoc h1');
     if (h1) {
-      h1.textContent = buildLocalLabel(current);
+      h1.textContent = buildLocalLabel(current) || h1.textContent;
     }
   }
 
@@ -91,6 +124,8 @@ function updateBuildTitles() {
     if (!info) continue;
     setSidebarLinkTextPreservingMarkup(a, buildLocalLabel(info));
   }
+
+  updateDocLinkLabels();
 }
 
 export default {
