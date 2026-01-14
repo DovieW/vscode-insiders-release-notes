@@ -23,3 +23,9 @@
 .VPNavBar .VPNavBarExtra .VPNavBarAppearance {
   order: 2;
 }
+
+/* No navbar divider lines (we only have one destination: Builds). */
+.VPNavBar .divider,
+.VPNavBar .divider-line {
+  display: none !important;
+}

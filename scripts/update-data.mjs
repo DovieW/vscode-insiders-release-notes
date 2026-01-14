@@ -188,8 +188,10 @@ async function rebuildBuildIndexes(repo) {
   const buildsIndex = `# Builds\n\n${lines.join("\n").trim()}\n`;
   await writeFile(BUILDS_INDEX_PATH, buildsIndex, "utf8");
 
-  const latestSlug = sorted[0]?.replace(/\.md$/, "") || null;
-  const home = `---\nlayout: home\n\ntitle: Insiders Changelog\n---\n\n# Insiders Changelog\n\nThis site publishes a **per-build changelog** for VS Code Insiders-style snapshots.\n\n- Repository: **${mdEscapeInline(repo)}**\n- Latest build: ${latestSlug ? `[${mdEscapeInline(buildLabelFromSlug(latestSlug))}](./builds/${encodeURIComponent(latestSlug)})` : "(none yet)"}\n\nGo to **[Builds](./builds/)** for the full list.\n`;
+  // Root page: redirect to Builds (this repo only really has one destination).
+  // We generate this file so the workflow can't accidentally re-introduce a separate "home".
+  const home = `---\ntitle: Builds\n---\n\n<script setup>\nimport { onMounted } from 'vue'\nimport { withBase } from 'vitepress'\n\nonMounted(() => {\n  // Use a hard redirect so it works even when served as a static site.
+  window.location.replace(withBase('/builds/'))\n})\n</script>\n\nRedirecting to **[Builds](./builds/)**...\n`;
   await writeFile(HOME_PATH, home, "utf8");
 }
 

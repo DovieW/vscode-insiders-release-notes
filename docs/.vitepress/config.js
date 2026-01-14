@@ -62,10 +62,7 @@ export default defineConfig({
 
   themeConfig: {
     siteTitle: 'Insiders Changelog',
-    nav: [
-      { text: 'Home', link: '/' },
-      { text: 'Builds', link: '/builds/' },
-    ],
+    nav: [],
 
     sidebar: {
       '/builds/': [
