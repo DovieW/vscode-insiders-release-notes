@@ -29,3 +29,15 @@
 .VPNavBar .divider-line {
   display: none !important;
 }
+
+/* VitePress default theme draws vertical separators via ::before on adjacent navbar items.
+ * Since we have no nav buttons, these separators look like random dividers.
+ */
+.VPNavBar .menu + .appearance::before,
+.VPNavBar .menu + .social-links::before,
+.VPNavBar .menu + .translations::before,
+.VPNavBar .translations + .appearance::before,
+.VPNavBar .appearance + .social-links::before {
+  display: none !important;
+  content: none !important;
+}
