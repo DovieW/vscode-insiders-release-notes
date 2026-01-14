@@ -377,7 +377,7 @@ title: "${title}"
 
 # ${title}
 
-Commit: [${mdEscapeInline(shortSha(toSha))}](https://github.com/${repo}/commit/${toSha}) · Previous: [${mdEscapeInline(shortSha(fromSha))}](https://github.com/${repo}/commit/${fromSha}) · Compare: [GitHub](${compareUrl})  
+Commit: [${mdEscapeInline(shortSha(toSha))}](https://github.com/${repo}/commit/${toSha}) · Previous: [${mdEscapeInline(shortSha(fromSha))}](https://github.com/${repo}/commit/${fromSha}) · Compare: [GitHub](${compareUrl})
 Version: \`${mdEscapeInline(version)}\` · Branch: \`${mdEscapeInline(defaultBranch)}\` · Upstream: [${mdEscapeInline(repo)}](https://github.com/${repo})
 ${warning}
 

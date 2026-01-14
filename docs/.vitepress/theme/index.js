@@ -21,6 +21,7 @@ function parseBuildFromPath(pathname) {
 
   rest = rest.replace(/^\.\/+/, '');
   rest = rest.replace(/^\.\.\/+/, '');
+  rest = rest.replace(/^\//, '');
   rest = rest.split('#')[0].split('?')[0];
   rest = rest.replace(/\/$/, '');
 
@@ -48,8 +49,10 @@ function parseBuildFromPath(pathname) {
 function parseBuildFromHref(href) {
   if (!href) return null;
   try {
-    const url = new URL(href, window.location.origin);
-    return parseBuildFromPath(url.pathname);
+    // Important: resolve relative links (e.g. "./2026-...") against the CURRENT PAGE,
+    // not just the origin, otherwise they resolve to "/2026-..." and we can't parse them.
+    const url = new URL(href, window.location.href);
+    return parseBuildFromPath(url.pathname) || parseBuildFromPath(href);
   } catch {
     // Relative href like "./2026-..." or "../builds/2026-..."
     return parseBuildFromPath(String(href));
