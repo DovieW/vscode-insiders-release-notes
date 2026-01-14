@@ -48,6 +48,8 @@ function parseBuildFromPath(pathname) {
 
 function parseBuildFromHref(href) {
   if (!href) return null;
+  // Never treat in-page anchors as build links.
+  if (String(href).startsWith('#')) return null;
   try {
     // Important: resolve relative links (e.g. "./2026-...") against the CURRENT PAGE,
     // not just the origin, otherwise they resolve to "/2026-..." and we can't parse them.
@@ -100,8 +102,10 @@ function setSidebarLinkTextPreservingMarkup(a, text) {
 
 function updateDocLinkLabels() {
   // Update links inside the main page content (e.g. /builds/ index list, and home page latest build link).
-  const docLinks = document.querySelectorAll('.VPDoc a');
+  const docLinks = document.querySelectorAll('.VPDoc a:not(.header-anchor)');
   for (const a of docLinks) {
+    // VitePress uses this for heading hover links. Never rewrite it.
+    if (a.classList.contains('header-anchor')) continue;
     const info = parseBuildFromHref(a.getAttribute('href'));
     if (!info) continue;
     a.textContent = buildLocalLabel(info) || a.textContent;
