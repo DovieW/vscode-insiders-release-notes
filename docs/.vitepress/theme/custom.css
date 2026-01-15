@@ -24,20 +24,38 @@
   order: 2;
 }
 
-/* No navbar divider lines (we only have one destination: Builds). */
+/* Remove the top-right “...” (extra navigation) flyout.
+ * This is redundant for this site and looks like a kebab/ellipsis menu.
+ * Keep the mobile hamburger intact (different element).
+ */
+.VPNavBar .VPFlyout.VPNavBarExtra,
+.VPNavBar .VPNavBarExtra.extra {
+  display: none !important;
+}
+
+/* Keep the main navbar bottom divider line (VitePress default).
+ * Previously we hid it globally, but it's a useful subtle separator.
+ */
 .VPNavBar .divider,
 .VPNavBar .divider-line {
-  display: none !important;
+  display: block;
 }
 
 /* VitePress default theme draws vertical separators via ::before on adjacent navbar items.
  * Since we have no nav buttons, these separators look like random dividers.
  */
+/* Restore the little vertical divider between the appearance toggle and GitHub icon.
+ * We still don't want other separators in the navbar.
+ */
 .VPNavBar .menu + .appearance::before,
 .VPNavBar .menu + .social-links::before,
 .VPNavBar .menu + .translations::before,
-.VPNavBar .translations + .appearance::before,
-.VPNavBar .appearance + .social-links::before {
+.VPNavBar .translations + .appearance::before {
   display: none !important;
   content: none !important;
+}
+
+.VPNavBar .appearance + .social-links::before {
+  display: block !important;
+  content: "" !important;
 }

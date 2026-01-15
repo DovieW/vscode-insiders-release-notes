@@ -78,7 +78,37 @@ jobs:
           tag=$(node -e "console.log(JSON.parse(require('fs').readFileSync('.out/build.json','utf8')).tag)")
           title=$(node -e "console.log(JSON.parse(require('fs').readFileSync('.out/build.json','utf8')).title)")
           notes=.out/release-notes.md
+          meta=.out/build.json
           target=$(git rev-parse HEAD)
+
+          # Build the GitHub Pages URL for this build page.
+          # Pages base is /<repo>/ for project pages.
+          repo_name=${{ github.event.repository.name }}
+          pages_base="https://${{ github.repository_owner }}.github.io/${repo_name}"
+          slug=$(node -e "console.log(JSON.parse(require('fs').readFileSync('.out/build.json','utf8')).slug)")
+          build_url="${pages_base}/builds/${slug}"
+
+          # Extract some useful metadata for the release header.
+          build_sha=$(node -e "console.log(JSON.parse(require('fs').readFileSync('.out/build.json','utf8')).buildSha)")
+          prev_sha=$(node -e "console.log(JSON.parse(require('fs').readFileSync('.out/build.json','utf8')).previousSha)")
+          version=$(node -e "console.log(JSON.parse(require('fs').readFileSync('.out/build.json','utf8')).version)")
+          short_build=${build_sha:0:7}
+          short_prev=${prev_sha:0:7}
+          upstream="https://github.com/microsoft/vscode"
+          commit_url="${upstream}/commit/${build_sha}"
+          prev_url="${upstream}/commit/${prev_sha}"
+          compare_url="${upstream}/compare/${prev_sha}...${build_sha}"
+
+          # Compose a release body that includes the build metadata + link, then the AI notes.
+          release_body=.out/release-body.md
+          {
+            echo "Build page: ${build_url}";
+            echo;
+            echo "Commit: ${commit_url} · Previous: ${prev_url} · Compare: ${compare_url}";
+            echo "Version: ${version}";
+            echo;
+            cat "$notes";
+          } > "$release_body"
 
           if gh release view "$tag" >/dev/null 2>&1; then
             echo "Release $tag already exists; skipping creation."
@@ -87,7 +117,7 @@ jobs:
 
           gh release create "$tag" \
             --title "$title" \
-            --notes-file "$notes" \
+            --notes-file "$release_body" \
             --target "$target"
 
       - name: Build site
