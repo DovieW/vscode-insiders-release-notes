@@ -364,7 +364,7 @@ function buildAiPrompt({ repo, defaultBranch, fromSha, toSha, compareUrl, pullRe
     range: { fromSha, toSha, compareUrl },
     // The final markdown is assembled programmatically. The model only supplies the per-PR label + explainer.
     // Expected rendering (for each PR):
-    // - [#123](url) **Title** — **add**
+    // - **✨** [#123](url) **Title**
     //   > explainer...
     labelOptions: ["add", "fix", "refactor", "upgrade"],
     pullRequests: prPayload,
@@ -430,6 +430,27 @@ function normalizeExplainerEntry(entry) {
   };
 }
 
+function labelToEmoji(label) {
+  // Deterministic rendering, independent of the model.
+  // User-requested mapping:
+  // - add      -> ✨
+  // - fix      -> 🐛
+  // - refactor -> 🔨
+  // - upgrade  -> ⬆️
+  switch (String(label || "").toLowerCase()) {
+    case "add":
+      return "✨";
+    case "fix":
+      return "🐛";
+    case "refactor":
+      return "🔨";
+    case "upgrade":
+      return "⬆️";
+    default:
+      return "🔨";
+  }
+}
+
 function buildExplainersMarkdown({ pullRequests, explainersByNumber }) {
   const prs = Array.isArray(pullRequests) ? pullRequests : [];
   if (!prs.length) return "";
@@ -457,13 +478,14 @@ function buildExplainersMarkdown({ pullRequests, explainersByNumber }) {
       const n = pr?.number;
       const title = mdEscapeEmphasis(pr?.title || "");
       const url = pr?.html_url;
+      const emoji = labelToEmoji(entry.label);
 
       if (n && url) {
-        lines.push(`- [#${n}](${url}) **${title || "(untitled change)"}** — **${entry.label}**`);
+        lines.push(`- **${emoji}** [#${n}](${url}) **${title || "(untitled change)"}**`);
       } else if (n) {
-        lines.push(`- #${n} **${title || "(untitled change)"}** — **${entry.label}**`);
+        lines.push(`- **${emoji}** #${n} **${title || "(untitled change)"}**`);
       } else {
-        lines.push(`- **${title || "(untitled change)"}** — **${entry.label}**`);
+        lines.push(`- **${emoji}** **${title || "(untitled change)"}**`);
       }
       // Use a markdown quote instead of a nested list item.
       lines.push(`  > ${entry.explainer}`);
