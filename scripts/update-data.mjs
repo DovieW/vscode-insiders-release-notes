@@ -24,6 +24,8 @@ const OUT_RELEASE_NOTES_PATH = join(OUT_DIR, "release-notes.md");
 const OUT_BUILD_META_PATH = join(OUT_DIR, "build.json");
 const OUT_INSTALLERS_JSON_PATH = join(OUT_DIR, "installers.json");
 const OUT_INSTALLERS_MD_PATH = join(OUT_DIR, "installers.md");
+const OUT_SYSTEM_PROMPT_PATH = join(OUT_DIR, "system-prompt.md");
+const OUT_USER_PROMPT_PATH = join(OUT_DIR, "user-prompt.md");
 
 const INSIDERS_COMMITS_FEED = "https://update.code.visualstudio.com/api/commits/insider";
 
@@ -391,6 +393,17 @@ async function generateAiExplainers({ repo, defaultBranch, fromSha, toSha, compa
 
   const client = new OpenAI({ apiKey: OPENAI_API_KEY });
   const { instructions, input } = buildAiPrompt({ repo, defaultBranch, fromSha, toSha, compareUrl, pullRequests });
+
+  // Debug artifacts: write the exact prompts we send to the API.
+  // - `instructions` acts like a system/developer prompt (behavior)
+  // - `input` is the user payload (the PR details JSON)
+  await writeFile(OUT_SYSTEM_PROMPT_PATH, String(instructions || "").trim() + "\n", "utf8");
+  try {
+    const pretty = JSON.stringify(JSON.parse(input), null, 2);
+    await writeFile(OUT_USER_PROMPT_PATH, pretty + "\n", "utf8");
+  } catch {
+    await writeFile(OUT_USER_PROMPT_PATH, String(input || "").trim() + "\n", "utf8");
+  }
 
   const response = await client.responses.create({
     model: OPENAI_MODEL,
