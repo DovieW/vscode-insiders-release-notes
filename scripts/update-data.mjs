@@ -28,6 +28,7 @@ const OUT_INSTALLERS_MD_PATH = join(OUT_DIR, "installers.md");
 const INSIDERS_COMMITS_FEED = "https://update.code.visualstudio.com/api/commits/insider";
 
 const INSIDERS_UPDATE_API_BASE = "https://update.code.visualstudio.com/api/update";
+const INSIDERS_LATEST_AVAILABLE_UPDATE_URL = "https://update.code.visualstudio.com/api/update/win32-x64-user/insider/latest";
 
 function shortSha(sha) {
   return (sha || "").slice(0, 7);
@@ -64,6 +65,9 @@ function parseArgs(argv) {
     if (a === "--build-sha") out.buildSha = argv[++i];
     else if (a === "--previous-sha") out.previousSha = argv[++i];
     else if (a === "--force") out.force = true;
+    else if (a === "--latest") out.latest = true;
+    else if (a === "--preview") out.preview = true;
+    else if (a === "--out") out.outPath = argv[++i];
   }
   return out;
 }
@@ -129,6 +133,17 @@ async function getInsidersBuildCommits() {
   const list = await res.json();
   if (!Array.isArray(list) || !list.length) throw new Error("Insiders commits feed returned no commits.");
   return list;
+}
+
+async function getLatestAvailableInsidersBuildSha() {
+  const res = await fetch(INSIDERS_LATEST_AVAILABLE_UPDATE_URL, { headers: { "User-Agent": "insiders-changes-site" } });
+  if (!res.ok) {
+    throw new Error(`Failed to fetch latest available Insiders build: ${res.status} ${res.statusText}`);
+  }
+  const json = await res.json();
+  const sha = json?.version;
+  if (!sha || typeof sha !== "string") throw new Error("Latest available Insiders response missing 'version' SHA.");
+  return sha;
 }
 
 async function getPullsForCommit(repo, sha) {
@@ -510,8 +525,14 @@ async function main() {
   await mkdir(OUT_DIR, { recursive: true });
 
   const args = parseArgs(process.argv);
-  const requestedBuildSha = args.buildSha;
-  if (!requestedBuildSha) throw new Error("Missing required --build-sha <sha> argument.");
+  const preview = Boolean(args.preview);
+  const requestedBuildSha = args.latest
+    ? await getLatestAvailableInsidersBuildSha()
+    : args.buildSha;
+
+  if (!requestedBuildSha) {
+    throw new Error("Missing required --build-sha <sha> argument (or pass --latest).");
+  }
   const force = Boolean(args.force);
 
   const state = (await readJsonIfExists(STATE_PATH)) || { repo: TARGET_REPO };
@@ -531,10 +552,13 @@ async function main() {
   const defaultBranch = repoInfo?.default_branch || "main";
 
   // If we've already processed this build or a newer one, do nothing (unless forced).
-  if (!force && state?.lastProcessedBuildSha) {
+  // In --preview mode, we always generate output for local testing.
+  if (!preview && !force && state?.lastProcessedBuildSha) {
     const lastIdx = insidersCommits.indexOf(state.lastProcessedBuildSha);
     if (lastIdx !== -1 && lastIdx <= buildIndex) {
-      await rebuildBuildIndexes(TARGET_REPO);
+      if (!preview) {
+        await rebuildBuildIndexes(TARGET_REPO);
+      }
       console.log(`Build already processed (state at ${shortSha(state.lastProcessedBuildSha)}). Skipping ${shortSha(buildSha)}.`);
       console.log("Tip: re-run with --force to regenerate the page for this build SHA.");
       return;
@@ -593,8 +617,15 @@ async function main() {
   });
 
   const filename = `${slug}.md`;
-  const outPath = join(BUILDS_DIR, filename);
-  await writeFile(outPath, md, "utf8");
+  const pagePath = join(BUILDS_DIR, filename);
+  const previewPath = args.outPath ? String(args.outPath) : join(OUT_DIR, "preview.md");
+
+  if (preview) {
+    await writeFile(previewPath, md, "utf8");
+    console.log(`Wrote preview markdown: ${previewPath}`);
+  } else {
+    await writeFile(pagePath, md, "utf8");
+  }
 
   // Emit workflow artifacts for creating a GitHub Release.
   // We keep AI notes as the main body and append official installer links (as links, not binaries).
@@ -616,32 +647,34 @@ async function main() {
     version,
     slug,
     notesFile: OUT_RELEASE_NOTES_PATH,
-    pageFile: `docs/builds/${filename}`,
+    pageFile: preview ? null : `docs/builds/${filename}`,
   };
   await writeFile(OUT_BUILD_META_PATH, JSON.stringify(meta, null, 2) + "\n", "utf8");
 
-  // When force-rebuilding an older build, do NOT move the state backwards.
-  let nextLastProcessedBuildSha = buildSha;
-  if (state?.lastProcessedBuildSha) {
-    const lastIdx = insidersCommits.indexOf(state.lastProcessedBuildSha);
-    if (lastIdx !== -1 && lastIdx < buildIndex) {
-      // lastIdx smaller => state SHA is newer than the one we're processing.
-      nextLastProcessedBuildSha = state.lastProcessedBuildSha;
+  if (!preview) {
+    // When force-rebuilding an older build, do NOT move the state backwards.
+    let nextLastProcessedBuildSha = buildSha;
+    if (state?.lastProcessedBuildSha) {
+      const lastIdx = insidersCommits.indexOf(state.lastProcessedBuildSha);
+      if (lastIdx !== -1 && lastIdx < buildIndex) {
+        // lastIdx smaller => state SHA is newer than the one we're processing.
+        nextLastProcessedBuildSha = state.lastProcessedBuildSha;
+      }
     }
+
+    const nextState = {
+      repo: TARGET_REPO,
+      defaultBranch,
+      lastProcessedBuildSha: nextLastProcessedBuildSha,
+      lastProcessedVersion: version,
+      lastProcessedAt: new Date().toISOString(),
+    };
+    await writeFile(STATE_PATH, JSON.stringify(nextState, null, 2) + "\n", "utf8");
+
+    await rebuildBuildIndexes(TARGET_REPO);
   }
 
-  const nextState = {
-    repo: TARGET_REPO,
-    defaultBranch,
-    lastProcessedBuildSha: nextLastProcessedBuildSha,
-    lastProcessedVersion: version,
-    lastProcessedAt: new Date().toISOString(),
-  };
-  await writeFile(STATE_PATH, JSON.stringify(nextState, null, 2) + "\n", "utf8");
-
-  await rebuildBuildIndexes(TARGET_REPO);
-
-  console.log(`Wrote build page: docs/builds/${filename}`);
+  if (!preview) console.log(`Wrote build page: docs/builds/${filename}`);
   console.log(`PRs: ${pullRequests.length} | Compare: ${compareUrl}`);
   console.log(`Release tag: ${tag}`);
   if (totalCommits > commits.length) {
