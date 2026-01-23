@@ -363,8 +363,9 @@ function buildAiPrompt({ repo, defaultBranch, fromSha, toSha, compareUrl, pullRe
     defaultBranch,
     range: { fromSha, toSha, compareUrl },
     // The final markdown is assembled programmatically. The model only supplies the per-PR label + explainer.
-    // Expected rendering (for each PR):
-    // - **✨** [#123](url) **Title**
+    // Expected rendering (grouped by label):
+    // ## ✨ NEW
+    // - [#123](url) **Title**
     //   > explainer...
     labelOptions: ["add", "fix", "refactor", "upgrade"],
     pullRequests: prPayload,
@@ -451,6 +452,23 @@ function labelToEmoji(label) {
   }
 }
 
+function labelToSectionHeading(label) {
+  // H2 section headings, in the desired order.
+  // Keep these deterministic so pages remain easy to diff/parse.
+  switch (String(label || "").toLowerCase()) {
+    case "add":
+      return "## ✨ NEW";
+    case "fix":
+      return "## 🐛 FIXES";
+    case "refactor":
+      return "## 🔨 REFACTORS";
+    case "upgrade":
+      return "## ⬆️ UPGRADES";
+    default:
+      return "## 🔨 REFACTORS";
+  }
+}
+
 function buildExplainersMarkdown({ pullRequests, explainersByNumber }) {
   const prs = Array.isArray(pullRequests) ? pullRequests : [];
   if (!prs.length) return "";
@@ -459,10 +477,6 @@ function buildExplainersMarkdown({ pullRequests, explainersByNumber }) {
   const buckets = new Map(order.map((k) => [k, []]));
 
   const lines = [];
-  lines.push("## Changes");
-  lines.push("");
-  lines.push("Each item has a plain-English explainer under it:");
-  lines.push("");
 
   // Sort/group by the model's label choice.
   for (const pr of prs) {
@@ -474,26 +488,32 @@ function buildExplainersMarkdown({ pullRequests, explainersByNumber }) {
   }
 
   for (const k of order) {
-    for (const { pr, entry } of buckets.get(k)) {
+    const items = buckets.get(k);
+    if (!items || items.length === 0) continue;
+
+    lines.push(labelToSectionHeading(k));
+    lines.push("");
+
+    for (const { pr, entry } of items) {
       const n = pr?.number;
       const title = mdEscapeEmphasis(pr?.title || "");
       const url = pr?.html_url;
-      const emoji = labelToEmoji(entry.label);
 
       if (n && url) {
-        lines.push(`- **${emoji}** [#${n}](${url}) **${title || "(untitled change)"}**`);
+        lines.push(`- [#${n}](${url}) **${title || "(untitled change)"}**`);
       } else if (n) {
-        lines.push(`- **${emoji}** #${n} **${title || "(untitled change)"}**`);
+        lines.push(`- #${n} **${title || "(untitled change)"}**`);
       } else {
-        lines.push(`- **${emoji}** **${title || "(untitled change)"}**`);
+        lines.push(`- **${title || "(untitled change)"}**`);
       }
       // Use a markdown quote instead of a nested list item.
       lines.push(`  > ${entry.explainer}`);
     }
+
+    lines.push("");
   }
 
-  lines.push("");
-  return lines.join("\n");
+  return lines.join("\n").trimEnd() + "\n";
 }
 
 async function generateAiExplainers({ repo, defaultBranch, fromSha, toSha, compareUrl, pullRequests }) {
