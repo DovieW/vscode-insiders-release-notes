@@ -22,8 +22,12 @@ const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4.1-mini";
 const OUT_DIR = join(new URL("../", import.meta.url).pathname, ".out");
 const OUT_RELEASE_NOTES_PATH = join(OUT_DIR, "release-notes.md");
 const OUT_BUILD_META_PATH = join(OUT_DIR, "build.json");
+const OUT_INSTALLERS_JSON_PATH = join(OUT_DIR, "installers.json");
+const OUT_INSTALLERS_MD_PATH = join(OUT_DIR, "installers.md");
 
 const INSIDERS_COMMITS_FEED = "https://update.code.visualstudio.com/api/commits/insider";
+
+const INSIDERS_UPDATE_API_BASE = "https://update.code.visualstudio.com/api/update";
 
 function shortSha(sha) {
   return (sha || "").slice(0, 7);
@@ -149,6 +153,59 @@ function todayUtc() {
 function mdEscapeInline(text) {
   // Keep it simple: avoid accidentally breaking markdown links/lists.
   return String(text || "").replaceAll("\r", "").trim();
+}
+
+async function getInsidersInstallerLinksForBuild(buildSha) {
+  // Best-effort: this is just convenience links to official Microsoft-hosted binaries.
+  // We do NOT redistribute or upload these binaries into GitHub.
+  const platforms = [
+    { id: "win32-x64-user", label: "Windows (User Setup, x64)" },
+    { id: "win32-x64", label: "Windows (System Setup, x64)" },
+    { id: "win32-arm64-user", label: "Windows (User Setup, ARM64)" },
+    { id: "win32-arm64", label: "Windows (System Setup, ARM64)" },
+    { id: "darwin", label: "macOS (Intel)" },
+    { id: "darwin-arm64", label: "macOS (Apple Silicon)" },
+    { id: "linux-x64", label: "Linux (tar.gz, x64)" },
+    { id: "linux-arm64", label: "Linux (tar.gz, ARM64)" },
+    { id: "linux-deb-x64", label: "Linux (deb, x64)" },
+    { id: "linux-deb-arm64", label: "Linux (deb, ARM64)" },
+    { id: "linux-rpm-x64", label: "Linux (rpm, x64)" },
+    { id: "linux-rpm-arm64", label: "Linux (rpm, ARM64)" },
+  ];
+
+  const results = [];
+  for (const p of platforms) {
+    const url = `${INSIDERS_UPDATE_API_BASE}/${p.id}/insider/${buildSha}`;
+    try {
+      const res = await fetch(url, { headers: { "User-Agent": "insiders-changes-site" } });
+      if (!res.ok) {
+        results.push({ ...p, ok: false, status: res.status, url: null });
+        continue;
+      }
+      const data = await res.json();
+      results.push({ ...p, ok: true, status: res.status, url: data?.url || null });
+    } catch (err) {
+      results.push({ ...p, ok: false, status: 0, url: null, error: String(err?.message || err) });
+    }
+  }
+
+  return results.filter((r) => r.ok && r.url);
+}
+
+function buildInstallersMarkdown(links) {
+  if (!Array.isArray(links) || links.length === 0) return "";
+
+  const lines = [];
+  lines.push("## Installers");
+  lines.push("");
+  lines.push("Official download links for this Insiders build:");
+  lines.push("");
+  for (const l of links) {
+    lines.push(`- ${mdEscapeInline(l.label)}: ${l.url}`);
+  }
+  lines.push("");
+
+  return lines.join("\n");
 }
 
 async function rebuildBuildIndexes(repo) {
@@ -364,6 +421,7 @@ function buildPageMarkdown({
   commits,
   version,
   buildTitleUtc,
+  installersMd,
   aiReleaseNotes,
 }) {
   const title = mdEscapeInline(buildTitleUtc);
@@ -380,6 +438,8 @@ title: "${title}"
 Commit: [${mdEscapeInline(shortSha(toSha))}](https://github.com/${repo}/commit/${toSha}) · Previous: [${mdEscapeInline(shortSha(fromSha))}](https://github.com/${repo}/commit/${fromSha}) · Compare: [GitHub](${compareUrl})
 Version: \`${mdEscapeInline(version)}\` · Branch: \`${mdEscapeInline(defaultBranch)}\` · Upstream: [${mdEscapeInline(repo)}](https://github.com/${repo})
 ${warning}
+
+${(installersMd || "").trim()}
 
 ${aiReleaseNotes.trim()}
 `;
@@ -452,6 +512,9 @@ async function main() {
     pullRequests,
   });
 
+  const installers = await getInsidersInstallerLinksForBuild(buildSha);
+  const installersMd = buildInstallersMarkdown(installers);
+
   const slug = `${timeParts.date}_${timeParts.time}_${version}_${shortSha(buildSha)}`;
 
   const md = buildPageMarkdown({
@@ -464,6 +527,7 @@ async function main() {
     commits,
     version,
     buildTitleUtc,
+    installersMd,
     aiReleaseNotes,
   });
 
@@ -471,8 +535,14 @@ async function main() {
   const outPath = join(BUILDS_DIR, filename);
   await writeFile(outPath, md, "utf8");
 
-  // Emit workflow artifacts for creating a GitHub Release (body should be AI notes only).
-  await writeFile(OUT_RELEASE_NOTES_PATH, aiReleaseNotes.trim() + "\n", "utf8");
+  // Emit workflow artifacts for creating a GitHub Release.
+  // We keep AI notes as the main body and append official installer links (as links, not binaries).
+  const releaseNotes = `${aiReleaseNotes.trim()}\n\n${(installersMd || "").trim()}\n`.trim() + "\n";
+  await writeFile(OUT_RELEASE_NOTES_PATH, releaseNotes, "utf8");
+
+  // Also emit installer links as standalone artifacts that can be attached to the Release.
+  await writeFile(OUT_INSTALLERS_JSON_PATH, JSON.stringify({ buildSha, installers }, null, 2) + "\n", "utf8");
+  await writeFile(OUT_INSTALLERS_MD_PATH, (installersMd || "").trim() + "\n", "utf8");
 
   const tag = `insiders/${version}/${timeParts.date.replaceAll("-", "")}-${timeParts.time.replaceAll("-", "")}/${shortSha(buildSha)}`;
   const releaseTitle = `VS Code Insiders ${version} — ${timeParts.display}`;
