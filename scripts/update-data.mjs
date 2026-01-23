@@ -169,6 +169,12 @@ async function getIssueCommentsForPullRequest(repo, number) {
   return githubJson(`https://api.github.com/repos/${repo}/issues/${number}/comments?per_page=100`);
 }
 
+async function getPullRequestReviews(repo, number) {
+  // Copilot “Pull request overview” is commonly posted as a PR review.
+  // https://docs.github.com/en/rest/pulls/reviews?apiVersion=2022-11-28#list-reviews-for-a-pull-request
+  return githubJson(`https://api.github.com/repos/${repo}/pulls/${number}/reviews?per_page=100`);
+}
+
 function extractCopilotSummariesFromComments(comments) {
   // We only want the “summary style” comments people leave by mentioning @copilot,
   // or comments authored by a Copilot bot user.
@@ -190,6 +196,38 @@ function extractCopilotSummariesFromComments(comments) {
   }
 
   return out;
+}
+
+function extractCopilotSummariesFromReviews(reviews) {
+  const out = [];
+  const list = Array.isArray(reviews) ? reviews : [];
+
+  for (const r of list) {
+    const author = String(r?.user?.login || "").toLowerCase();
+    const body = String(r?.body || "").trim();
+    if (!body) continue;
+
+    // We primarily care about Copilot-authored reviews.
+    const isCopilotAuthor = author.includes("copilot");
+    if (!isCopilotAuthor) continue;
+
+    out.push(body.slice(0, 1200));
+    if (out.length >= 2) break;
+  }
+
+  return out;
+}
+
+function mergeCopilotSummaries({ commentSummaries, reviewSummaries }) {
+  const merged = [];
+  for (const s of [...(reviewSummaries || []), ...(commentSummaries || [])]) {
+    const v = String(s || "").trim();
+    if (!v) continue;
+    if (merged.includes(v)) continue;
+    merged.push(v);
+    if (merged.length >= 3) break;
+  }
+  return merged;
 }
 
 function todayUtc() {
@@ -459,8 +497,15 @@ async function collectMergedPullRequestsForRange({ repo, commits }) {
   // Enrich the newest PRs first (these are also the most likely to have recent @copilot summaries).
   for (const pr of prs.slice(0, MAX_PRS_WITH_COMMENT_ENRICHMENT)) {
     try {
-      const comments = await getIssueCommentsForPullRequest(repo, pr.number);
-      pr.copilot_summaries = extractCopilotSummariesFromComments(comments);
+      // Best-effort: pull both issue comments and PR reviews. Copilot summaries show up in either.
+      const [comments, reviews] = await Promise.all([
+        getIssueCommentsForPullRequest(repo, pr.number),
+        getPullRequestReviews(repo, pr.number),
+      ]);
+      pr.copilot_summaries = mergeCopilotSummaries({
+        commentSummaries: extractCopilotSummariesFromComments(comments),
+        reviewSummaries: extractCopilotSummariesFromReviews(reviews),
+      });
     } catch (err) {
       pr.copilot_summaries = [];
       console.warn(`Failed to fetch comments for PR #${pr.number}: ${err?.message || err}`);
