@@ -282,7 +282,7 @@ async function rebuildBuildIndexes(repo) {
 }
 
 function buildAiPrompt({ repo, defaultBranch, fromSha, toSha, compareUrl, pullRequests }) {
-  // Keep it deterministic and “release-notes shaped”. Output should be markdown only.
+  // Keep it deterministic. Output should be machine-mergeable.
   const prPayload = (pullRequests || []).map((pr) => ({
     number: pr.number,
     title: pr.title,
@@ -303,70 +303,75 @@ function buildAiPrompt({ repo, defaultBranch, fromSha, toSha, compareUrl, pullRe
 
   return {
     instructions:
-      "You write concise, high-signal release notes for developers. " +
-      "Given a list of merged PRs for a single build, produce clean Markdown suitable for a VitePress page. " +
-      "Rules: (1) No preamble, just markdown content. (2) Do NOT use H1 headings (#); the page already has a title. Start sections at H2 (##) or below. " +
-      "(3) Prefer short sections with bullet points. " +
-      "(3.1) Some PRs include one or more 'copilot_summaries' (comments mentioning @copilot or authored by a copilot bot). If present, treat them as helpful context. Incorporate the substance, but do NOT quote long chunks verbatim and do NOT mention @copilot explicitly. " +
-      "(4) Every bullet MUST begin with exactly ONE of these bold labels (and only these): **new:**, **upgrade:**, **refactor:**, **remove:**, **fix:**. " +
-      "Do not invent other labels. Use lowercase and include the colon exactly as shown. " +
-      "Use **upgrade:** specifically for dependency upgrades / version bumps. " +
-      "(5) Each bullet should include a PR link like [#12345](url). " +
-      "(6) Group by theme/area when obvious from titles/labels; otherwise use a simple 'Highlights' + 'Other changes' structure. " +
-      "Within EACH section, group bullets by label and order groups like this: new → upgrade → refactor → remove → fix (fixes always last). " +
-      "Important: Do NOT create mini sections/subheadings for labels (e.g. '### New' / '### Fixes'). " +
-      "Labels must appear as prefixes on bullet lines only (e.g. '- **new:** ...'). " +
-      "(7) Call out breaking changes if clearly indicated, otherwise omit a breaking section.",
+      "You write simple, easy-to-understand explainers for developers. " +
+      "Given a list of merged PRs for a single build, generate ONE short explainer per PR. " +
+      "Output format: STRICT JSON object ONLY (no markdown, no code fences) where keys are PR numbers as strings and values are 1-2 sentence explainers. " +
+      "Rules: (1) Keep explainers plain-English and concrete (what changed + who benefits). " +
+      "(2) Do NOT mention @copilot. Some PRs include 'copilot_summaries' - treat them as helpful context. " +
+      "(3) Avoid jargon. If you must use a technical term, add a tiny parenthetical. " +
+      "(4) Do not hallucinate: if context is unclear, say something like 'Internal maintenance/refactoring; no user-visible change expected.' " +
+      "(5) Keep each value under 220 characters.",
     input: JSON.stringify(input),
   };
 }
 
-function normalizeAiReleaseNotes(text) {
-  // The prompt asks the model to *not* create label subheadings like "### New",
-  // but models can still do it. This normalizer converts that pattern into
-  // labeled bullets so the output stays consistent.
-  const allowed = new Set(["new", "upgrade", "refactor", "remove", "fix"]);
-  const labelHeading = /^(#{2,6})\s*\*\*?\s*(new|upgrade|refactor|remove|fix)(?:es)?\s*\*\*?\s*:??\s*$/i;
-  const labeledBullet = /^\s*-\s+\*\*(new|upgrade|refactor|remove|fix):\*\*/i;
-  const bullet = /^\s*-\s+/;
-
-  let currentLabel = null;
-  const out = [];
-
-  for (const line of String(text || "").replaceAll("\r", "").split("\n")) {
-    const m = labelHeading.exec(line.trim());
-    if (m) {
-      const l = String(m[2] || "").toLowerCase();
-      currentLabel = allowed.has(l) ? l : null;
-      // Drop the label heading line entirely.
-      continue;
-    }
-
-    if (labeledBullet.test(line)) {
-      // Reset label context once we see explicitly labeled bullets.
-      currentLabel = null;
-      out.push(line);
-      continue;
-    }
-
-    if (currentLabel && bullet.test(line) && !labeledBullet.test(line)) {
-      // Prefix unlabeled bullets under a label heading.
-      out.push(line.replace(bullet, `- **${currentLabel}:** `));
-      continue;
-    }
-
-    out.push(line);
+function extractJsonObjectFromText(raw) {
+  const s = String(raw || "").trim();
+  if (!s) return null;
+  const first = s.indexOf("{");
+  const last = s.lastIndexOf("}");
+  if (first === -1 || last === -1 || last <= first) return null;
+  const slice = s.slice(first, last + 1);
+  try {
+    return JSON.parse(slice);
+  } catch {
+    return null;
   }
-
-  return out.join("\n").trim();
 }
 
-async function generateAiReleaseNotes({ repo, defaultBranch, fromSha, toSha, compareUrl, pullRequests }) {
+function clampExplainer(text) {
+  const t = String(text || "").replaceAll("\r", "").replaceAll("\n", " ").trim();
+  if (!t) return "Internal maintenance/refactoring; no user-visible change expected.";
+  return t.length > 220 ? (t.slice(0, 217).trimEnd() + "...") : t;
+}
+
+function buildExplainersMarkdown({ pullRequests, explainersByNumber }) {
+  const prs = Array.isArray(pullRequests) ? pullRequests : [];
+  if (!prs.length) return "";
+
+  const lines = [];
+  lines.push("## Changes");
+  lines.push("");
+  lines.push("Each item has a plain-English explainer under it:");
+  lines.push("");
+
+  for (const pr of prs) {
+    const n = pr?.number;
+    const title = mdEscapeInline(pr?.title || "");
+    const url = pr?.html_url;
+    const explainerRaw = explainersByNumber?.[String(n)];
+    const explainer = clampExplainer(explainerRaw);
+
+    if (n && url) {
+      lines.push(`- [#${n}](${url}) ${title}`);
+    } else if (n) {
+      lines.push(`- #${n} ${title}`);
+    } else {
+      lines.push(`- ${title || "(untitled change)"}`);
+    }
+    lines.push(`  - ${explainer}`);
+  }
+
+  lines.push("");
+  return lines.join("\n");
+}
+
+async function generateAiExplainers({ repo, defaultBranch, fromSha, toSha, compareUrl, pullRequests }) {
   if (!OPENAI_API_KEY) {
-    throw new Error("OPENAI_API_KEY is required to generate release notes.");
+    throw new Error("OPENAI_API_KEY is required to generate explainers.");
   }
   if (!pullRequests?.length) {
-    throw new Error("No PRs found for this build range; refusing to generate empty release notes.");
+    throw new Error("No PRs found for this build range; refusing to generate empty explainers.");
   }
 
   const client = new OpenAI({ apiKey: OPENAI_API_KEY });
@@ -378,9 +383,10 @@ async function generateAiReleaseNotes({ repo, defaultBranch, fromSha, toSha, com
     input,
   });
 
-  const text = normalizeAiReleaseNotes((response?.output_text || "").trim());
-  if (!text) throw new Error("OpenAI returned empty release notes.");
-  return text;
+  const raw = (response?.output_text || "").trim();
+  const json = extractJsonObjectFromText(raw);
+  if (!json || typeof json !== "object") throw new Error("OpenAI did not return a valid JSON object for explainers.");
+  return json;
 }
 
 async function collectMergedPullRequestsForRange({ repo, commits }) {
@@ -475,7 +481,7 @@ function buildPageMarkdown({
   version,
   buildTitleUtc,
   installersMd,
-  aiReleaseNotes,
+  explainersMd,
 }) {
   const title = mdEscapeInline(buildTitleUtc);
   const warning = totalCommits > commits.length
@@ -494,7 +500,7 @@ ${warning}
 
 ${(installersMd || "").trim()}
 
-${aiReleaseNotes.trim()}
+${(explainersMd || "").trim()}
 `;
 }
 
@@ -556,7 +562,7 @@ async function main() {
     throw new Error(`Too many PRs for this build (${pullRequests.length}). Refusing to generate; handle manually.`);
   }
 
-  const aiReleaseNotes = await generateAiReleaseNotes({
+  const explainersByNumber = await generateAiExplainers({
     repo: TARGET_REPO,
     defaultBranch,
     fromSha: previousSha,
@@ -564,6 +570,8 @@ async function main() {
     compareUrl,
     pullRequests,
   });
+
+  const explainersMd = buildExplainersMarkdown({ pullRequests, explainersByNumber });
 
   const installers = await getInsidersInstallerLinksForBuild(buildSha);
   const installersMd = buildInstallersMarkdown(installers);
@@ -581,7 +589,7 @@ async function main() {
     version,
     buildTitleUtc,
     installersMd,
-    aiReleaseNotes,
+    explainersMd,
   });
 
   const filename = `${slug}.md`;
@@ -590,7 +598,7 @@ async function main() {
 
   // Emit workflow artifacts for creating a GitHub Release.
   // We keep AI notes as the main body and append official installer links (as links, not binaries).
-  const releaseNotes = `${aiReleaseNotes.trim()}\n\n${(installersMd || "").trim()}\n`.trim() + "\n";
+  const releaseNotes = `${(explainersMd || "").trim()}\n\n${(installersMd || "").trim()}\n`.trim() + "\n";
   await writeFile(OUT_RELEASE_NOTES_PATH, releaseNotes, "utf8");
 
   // Also emit installer links as standalone artifacts that can be attached to the Release.
