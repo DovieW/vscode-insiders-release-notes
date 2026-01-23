@@ -146,6 +146,35 @@ async function getPullRequest(repo, number) {
   return githubJson(`https://api.github.com/repos/${repo}/pulls/${number}`);
 }
 
+async function getIssueCommentsForPullRequest(repo, number) {
+  // PRs are issues, so issue comments live on /issues/:number/comments
+  // https://docs.github.com/en/rest/issues/comments?apiVersion=2022-11-28#list-issue-comments
+  return githubJson(`https://api.github.com/repos/${repo}/issues/${number}/comments?per_page=100`);
+}
+
+function extractCopilotSummariesFromComments(comments) {
+  // We only want the “summary style” comments people leave by mentioning @copilot,
+  // or comments authored by a Copilot bot user.
+  const out = [];
+  const list = Array.isArray(comments) ? comments : [];
+
+  for (const c of list) {
+    const author = String(c?.user?.login || "").toLowerCase();
+    const body = String(c?.body || "").trim();
+    if (!body) continue;
+
+    const mentionsCopilot = /(^|\s)@copilot\b/i.test(body);
+    const isCopilotAuthor = author.includes("copilot");
+    if (!mentionsCopilot && !isCopilotAuthor) continue;
+
+    // Keep it short to avoid token blow-ups.
+    out.push(body.slice(0, 1200));
+    if (out.length >= 2) break;
+  }
+
+  return out;
+}
+
 function todayUtc() {
   return new Date().toISOString().slice(0, 10);
 }
@@ -262,6 +291,7 @@ function buildAiPrompt({ repo, defaultBranch, fromSha, toSha, compareUrl, pullRe
     merged_at: pr.merged_at || null,
     labels: Array.isArray(pr.labels) ? pr.labels.map((l) => l?.name).filter(Boolean) : [],
     body: pr.body ? String(pr.body).slice(0, 4000) : "",
+    copilot_summaries: Array.isArray(pr.copilot_summaries) ? pr.copilot_summaries : [],
   }));
 
   const input = {
@@ -277,6 +307,7 @@ function buildAiPrompt({ repo, defaultBranch, fromSha, toSha, compareUrl, pullRe
       "Given a list of merged PRs for a single build, produce clean Markdown suitable for a VitePress page. " +
       "Rules: (1) No preamble, just markdown content. (2) Do NOT use H1 headings (#); the page already has a title. Start sections at H2 (##) or below. " +
       "(3) Prefer short sections with bullet points. " +
+      "(3.1) Some PRs include one or more 'copilot_summaries' (comments mentioning @copilot or authored by a copilot bot). If present, treat them as helpful context. Incorporate the substance, but do NOT quote long chunks verbatim and do NOT mention @copilot explicitly. " +
       "(4) Every bullet MUST begin with exactly ONE of these bold labels (and only these): **new:**, **upgrade:**, **refactor:**, **remove:**, **fix:**. " +
       "Do not invent other labels. Use lowercase and include the colon exactly as shown. " +
       "Use **upgrade:** specifically for dependency upgrades / version bumps. " +
@@ -370,16 +401,38 @@ async function collectMergedPullRequestsForRange({ repo, commits }) {
   }
 
   const prs = [];
+  // Safety valve: PR ranges can be large, and fetching comments is extra API traffic.
+  // We'll enrich only the first N PRs (most recently merged after sorting) by default.
+  const MAX_PRS_WITH_COMMENT_ENRICHMENT = 40;
+
   for (const n of prNumbers) {
     try {
       const pr = await getPullRequest(repo, n);
-      if (pr?.merged_at) prs.push(pr);
+      if (!pr?.merged_at) continue;
+
+      // Best-effort: enrich PR with @copilot summaries (or copilot-bot authored comments).
+      // If GitHub rate limits, we still want the build to proceed.
+      pr.copilot_summaries = [];
+
+      prs.push(pr);
     } catch (err) {
       console.warn(`Failed to fetch PR #${n}: ${err?.message || err}`);
     }
   }
 
   prs.sort((a, b) => String(b.merged_at || "").localeCompare(String(a.merged_at || "")));
+
+  // Enrich the newest PRs first (these are also the most likely to have recent @copilot summaries).
+  for (const pr of prs.slice(0, MAX_PRS_WITH_COMMENT_ENRICHMENT)) {
+    try {
+      const comments = await getIssueCommentsForPullRequest(repo, pr.number);
+      pr.copilot_summaries = extractCopilotSummariesFromComments(comments);
+    } catch (err) {
+      pr.copilot_summaries = [];
+      console.warn(`Failed to fetch comments for PR #${pr.number}: ${err?.message || err}`);
+    }
+  }
+
   return prs;
 }
 
