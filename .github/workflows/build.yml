@@ -110,22 +110,23 @@ jobs:
             cat "$notes";
           } > "$release_body"
 
-            # Attach official installer link artifacts (NOT the binaries themselves).
-            if [ -f .out/installers.json ]; then
-              gh release upload "$tag" .out/installers.json --clobber
-            fi
-            if [ -f .out/installers.md ]; then
-              gh release upload "$tag" .out/installers.md --clobber
-            fi
+          # Ensure the release exists before attempting to upload assets.
           if gh release view "$tag" >/dev/null 2>&1; then
             echo "Release $tag already exists; skipping creation."
-            exit 0
+          else
+            gh release create "$tag" \
+              --title "$title" \
+              --notes-file "$release_body" \
+              --target "$target"
           fi
 
-          gh release create "$tag" \
-            --title "$title" \
-            --notes-file "$release_body" \
-            --target "$target"
+          # Attach official installer link artifacts (NOT the binaries themselves).
+          if [ -f .out/installers.json ]; then
+            gh release upload "$tag" .out/installers.json --clobber
+          fi
+          if [ -f .out/installers.md ]; then
+            gh release upload "$tag" .out/installers.md --clobber
+          fi
 
       - name: Build site
         run: npm run docs:build
