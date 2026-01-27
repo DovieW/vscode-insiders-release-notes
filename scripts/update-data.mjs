@@ -251,6 +251,16 @@ function mdEscapeEmphasis(text) {
 async function getInsidersInstallerLinksForBuild(buildSha) {
   // Best-effort: this is just convenience links to official Microsoft-hosted binaries.
   // We do NOT redistribute or upload these binaries into GitHub.
+  //
+  // IMPORTANT:
+  // The update service endpoint shape is:
+  //   /api/update/<platform>/<channel>/<currentVersion>
+  // When <currentVersion> is already the latest, the service can return 204 (No Content).
+  // We only need download links for the *current/latest* Insiders build, so we always
+  // query the explicit `/latest` endpoint to avoid 204s.
+  //
+  // `buildSha` is kept for backward compatibility (call-sites + artifacts include it),
+  // but it is not used for lookup.
   const platforms = [
     { id: "win32-x64-user", label: "Windows (User Setup, x64)" },
     { id: "win32-x64", label: "Windows (System Setup, x64)" },
@@ -268,9 +278,14 @@ async function getInsidersInstallerLinksForBuild(buildSha) {
 
   const results = [];
   for (const p of platforms) {
-    const url = `${INSIDERS_UPDATE_API_BASE}/${p.id}/insider/${buildSha}`;
+    const url = `${INSIDERS_UPDATE_API_BASE}/${p.id}/insider/latest`;
     try {
       const res = await fetch(url, { headers: { "User-Agent": "insiders-changes-site" } });
+      if (res.status === 204) {
+        // No update available. With /latest this shouldn't happen, but keep it robust.
+        results.push({ ...p, ok: false, status: res.status, url: null });
+        continue;
+      }
       if (!res.ok) {
         results.push({ ...p, ok: false, status: res.status, url: null });
         continue;
@@ -291,7 +306,7 @@ function buildInstallersMarkdown(links) {
   const lines = [];
   lines.push("## Installers");
   lines.push("");
-  lines.push("Official download links for this Insiders build:");
+  lines.push("Official download links for the current (latest) VS Code Insiders build (may be newer than the build described above):");
   lines.push("");
   for (const l of links) {
     lines.push(`- ${mdEscapeInline(l.label)}: ${l.url}`);

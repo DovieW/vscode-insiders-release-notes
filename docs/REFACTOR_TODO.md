@@ -18,3 +18,9 @@ These are larger cleanups that feel worthwhile, but were out of scope for the cu
 ## Validation
 - **Add a lightweight check (script or test) that validates the release header format.**
   - Example: ensure the build page URL, commit URL, previous URL, and compare URL are present in the generated release body.
+
+## Installer links
+- **Document (or encode) the VS Code update service semantics more explicitly.**
+  - `/api/update/<platform>/insider/<currentVersion>` can return **204 No Content** when `currentVersion` is already the latest.
+  - This repo only needs “download the current Insiders build”, so we now use `/latest` endpoints for installer links.
+  - If we ever want “download the exact build for this changelog page”, we’ll need a different source of truth (the update service doesn’t appear to support historical lookup by commit SHA via that endpoint).
