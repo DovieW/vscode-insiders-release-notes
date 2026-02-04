@@ -329,17 +329,9 @@ function extractTokenUsageFromOpenAiResponse(response) {
 }
 
 function buildTokenUsageMarkdown(usage) {
-  if (!usage || (usage.inputTokens == null && usage.outputTokens == null)) return "";
+  if (!usage || usage.inputTokens == null || usage.outputTokens == null) return "";
 
-  const lines = [];
-  lines.push("## Token usage");
-  lines.push("");
-  if (usage.inputTokens != null) lines.push(`- Input tokens: ${usage.inputTokens}`);
-  if (usage.outputTokens != null) lines.push(`- Output tokens: ${usage.outputTokens}`);
-  if (usage.totalTokens != null) lines.push(`- Total tokens: ${usage.totalTokens}`);
-  lines.push("");
-
-  return lines.join("\n");
+  return `Token usage: In: ${usage.inputTokens} Out: ${usage.outputTokens}`;
 }
 
 async function rebuildBuildIndexes(repo) {
@@ -712,8 +704,8 @@ function buildPageMarkdown({
 
   const body = [
     (installersMd || "").trim(),
-    (tokensMd || "").trim(),
     (explainersMd || "").trim(),
+    (tokensMd || "").trim(),
   ].filter(Boolean).join("\n\n");
 
   return `---
