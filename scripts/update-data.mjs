@@ -306,7 +306,7 @@ function buildInstallersMarkdown(links) {
   const lines = [];
   lines.push("## Installers");
   lines.push("");
-  lines.push("Official download links for the current (latest) VS Code Insiders build (may be newer than the build described above):");
+  lines.push("Official download links for the current VS Code Insiders build (may be newer than the build described above):");
   lines.push("");
   for (const l of links) {
     lines.push(`- [${mdEscapeInline(l.label)}](${l.url})`);
@@ -331,7 +331,7 @@ function extractTokenUsageFromOpenAiResponse(response) {
 function buildTokenUsageMarkdown(usage) {
   if (!usage || usage.inputTokens == null || usage.outputTokens == null) return "";
 
-  return `Token usage: In: ${usage.inputTokens} Out: ${usage.outputTokens}`;
+  return `Token usage - ${usage.inputTokens} Out: ${usage.outputTokens}`;
 }
 
 async function rebuildBuildIndexes(repo) {
