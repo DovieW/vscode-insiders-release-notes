@@ -316,6 +316,32 @@ function buildInstallersMarkdown(links) {
   return lines.join("\n");
 }
 
+function extractTokenUsageFromOpenAiResponse(response) {
+  const u = response?.usage;
+  if (!u || typeof u !== "object") return null;
+
+  const inputTokens = u.input_tokens ?? u.prompt_tokens ?? null;
+  const outputTokens = u.output_tokens ?? u.completion_tokens ?? null;
+  const totalTokens = u.total_tokens ?? (inputTokens != null && outputTokens != null ? inputTokens + outputTokens : null);
+
+  if (inputTokens == null && outputTokens == null) return null;
+  return { inputTokens, outputTokens, totalTokens };
+}
+
+function buildTokenUsageMarkdown(usage) {
+  if (!usage || (usage.inputTokens == null && usage.outputTokens == null)) return "";
+
+  const lines = [];
+  lines.push("## Token usage");
+  lines.push("");
+  if (usage.inputTokens != null) lines.push(`- Input tokens: ${usage.inputTokens}`);
+  if (usage.outputTokens != null) lines.push(`- Output tokens: ${usage.outputTokens}`);
+  if (usage.totalTokens != null) lines.push(`- Total tokens: ${usage.totalTokens}`);
+  lines.push("");
+
+  return lines.join("\n");
+}
+
 async function rebuildBuildIndexes(repo) {
   await mkdir(BUILDS_DIR, { recursive: true });
 
@@ -559,6 +585,8 @@ async function generateAiExplainers({ repo, defaultBranch, fromSha, toSha, compa
     input,
   });
 
+  const tokenUsage = extractTokenUsageFromOpenAiResponse(response);
+
   const raw = (response?.output_text || "").trim();
   const json = extractJsonObjectFromText(raw);
   if (!json || typeof json !== "object") throw new Error("OpenAI did not return a valid JSON object for explainers.");
@@ -571,7 +599,8 @@ async function generateAiExplainers({ repo, defaultBranch, fromSha, toSha, compa
     if (typeof v.explainer !== "string") throw new Error(`Invalid explainer for PR ${k}; expected string.`);
     if (typeof v.label !== "string") throw new Error(`Invalid label for PR ${k}; expected string.`);
   }
-  return json;
+
+  return { explainersByNumber: json, tokenUsage };
 }
 
 async function collectMergedPullRequestsForRange({ repo, commits }) {
@@ -673,12 +702,19 @@ function buildPageMarkdown({
   version,
   buildTitleUtc,
   installersMd,
+  tokensMd,
   explainersMd,
 }) {
   const title = mdEscapeInline(buildTitleUtc);
   const warning = totalCommits > commits.length
     ? `\n> ⚠️ GitHub compare returned ${commits.length} of ${totalCommits} commits for this range. This changelog may be incomplete.\n`
     : "";
+
+  const body = [
+    (installersMd || "").trim(),
+    (tokensMd || "").trim(),
+    (explainersMd || "").trim(),
+  ].filter(Boolean).join("\n\n");
 
   return `---
 title: "${title}"
@@ -690,9 +726,7 @@ Commit: [${mdEscapeInline(shortSha(toSha))}](https://github.com/${repo}/commit/$
 Version: \`${mdEscapeInline(version)}\` · Branch: \`${mdEscapeInline(defaultBranch)}\` · Upstream: [${mdEscapeInline(repo)}](https://github.com/${repo})
 ${warning}
 
-${(installersMd || "").trim()}
-
-${(explainersMd || "").trim()}
+${body}
 `;
 }
 
@@ -763,7 +797,7 @@ async function main() {
     throw new Error(`Too many PRs for this build (${pullRequests.length}). Refusing to generate; handle manually.`);
   }
 
-  const explainersByNumber = await generateAiExplainers({
+  const { explainersByNumber, tokenUsage } = await generateAiExplainers({
     repo: TARGET_REPO,
     defaultBranch,
     fromSha: previousSha,
@@ -776,6 +810,7 @@ async function main() {
 
   const installers = await getInsidersInstallerLinksForBuild(buildSha);
   const installersMd = buildInstallersMarkdown(installers);
+  const tokensMd = buildTokenUsageMarkdown(tokenUsage);
 
   const slug = `${timeParts.date}_${timeParts.time}_${version}_${shortSha(buildSha)}`;
 
@@ -790,6 +825,7 @@ async function main() {
     version,
     buildTitleUtc,
     installersMd,
+    tokensMd,
     explainersMd,
   });
 
@@ -806,7 +842,11 @@ async function main() {
 
   // Emit workflow artifacts for creating a GitHub Release.
   // We keep AI notes as the main body and append official installer links (as links, not binaries).
-  const releaseNotes = `${(explainersMd || "").trim()}\n\n${(installersMd || "").trim()}\n`.trim() + "\n";
+  const releaseNotes = [
+    (explainersMd || "").trim(),
+    (installersMd || "").trim(),
+    (tokensMd || "").trim(),
+  ].filter(Boolean).join("\n\n").trim() + "\n";
   await writeFile(OUT_RELEASE_NOTES_PATH, releaseNotes, "utf8");
 
   // Also emit installer links as standalone artifacts that can be attached to the Release.
