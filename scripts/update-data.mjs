@@ -309,7 +309,7 @@ function buildInstallersMarkdown(links) {
   lines.push("Official download links for the current (latest) VS Code Insiders build (may be newer than the build described above):");
   lines.push("");
   for (const l of links) {
-    lines.push(`- ${mdEscapeInline(l.label)}: ${l.url}`);
+    lines.push(`- [${mdEscapeInline(l.label)}](${l.url})`);
   }
   lines.push("");
 
@@ -703,9 +703,9 @@ function buildPageMarkdown({
     : "";
 
   const body = [
-    (installersMd || "").trim(),
     (explainersMd || "").trim(),
     (tokensMd || "").trim(),
+    (installersMd || "").trim(),
   ].filter(Boolean).join("\n\n");
 
   return `---
