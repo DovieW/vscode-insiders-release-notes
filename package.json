@@ -6,7 +6,7 @@
     "node": ">=20"
   },
   "dependencies": {
-    "dotenv": "^17.2.3",
+    "dotenv": "^17.4.0",
     "openai": "^5.22.1",
     "vitepress": "^1.6.4"
   },
