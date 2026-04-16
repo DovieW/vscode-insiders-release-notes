@@ -48,6 +48,20 @@ jobs:
 
           class RateLimitError extends Error {}
 
+          function getRetryDelayMs(retryAfterHeader, attempt) {
+            const retryAfterSeconds = Number(retryAfterHeader);
+            if (Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0) {
+              return retryAfterSeconds * 1000;
+            }
+
+            const retryAfterDate = Date.parse(retryAfterHeader || '');
+            if (Number.isFinite(retryAfterDate)) {
+              return Math.max(retryAfterDate - Date.now(), 0);
+            }
+
+            return BASE_RETRY_DELAY_MS * attempt;
+          }
+
           async function fetchJson(url) {
             for (let attempt = 1; attempt <= MAX_RATE_LIMIT_ATTEMPTS; attempt++) {
               const res = await fetch(url, { headers: { 'User-Agent': 'insiders-changes-site' } });
@@ -56,11 +70,9 @@ jobs:
               }
 
               if (res.status === 429) {
-                const retryAfterSeconds = Number(res.headers.get('retry-after'));
+                const retryAfterHeader = res.headers.get('retry-after');
                 if (attempt < MAX_RATE_LIMIT_ATTEMPTS) {
-                  const delayMs = Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0
-                    ? retryAfterSeconds * 1000
-                    : BASE_RETRY_DELAY_MS * attempt;
+                  const delayMs = getRetryDelayMs(retryAfterHeader, attempt);
                   console.warn(`Rate limited fetching ${url}; retrying in ${Math.ceil(delayMs / 1000)}s.`);
                   await sleep(delayMs);
                   continue;
