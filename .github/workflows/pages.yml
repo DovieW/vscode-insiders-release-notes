@@ -40,10 +40,11 @@ jobs:
           node - <<'NODE'
           const fs = require('fs');
           const { pathToFileURL } = require('url');
+          const { resolve } = require('path');
 
           const feed = process.env.INSIDERS_COMMITS_FEED;
           const latestUpdateUrl = process.env.INSIDERS_LATEST_UPDATE_URL;
-          const helperUrl = pathToFileURL(`${process.cwd()}/scripts/fetch-json-with-retry.mjs`).href;
+          const helperUrl = pathToFileURL(resolve('scripts/fetch-json-with-retry.mjs')).href;
 
           async function main() {
             const { fetchJsonWithRetry } = await import(helperUrl);

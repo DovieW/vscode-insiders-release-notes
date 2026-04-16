@@ -60,7 +60,7 @@ export async function fetchJsonWithRetry(
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
     try {
       const res = await fetchImpl(url, { headers, signal: controller.signal });
@@ -101,7 +101,7 @@ export async function fetchJsonWithRetry(
 
       break;
     } finally {
-      clearTimeout(timeout);
+      clearTimeout(timeoutId);
     }
   }
 
