@@ -43,13 +43,13 @@ jobs:
 
           const feed = process.env.INSIDERS_COMMITS_FEED;
           const latestUpdateUrl = process.env.INSIDERS_LATEST_UPDATE_URL;
-          const MAX_RATE_LIMIT_RETRIES = 2;
+          const MAX_RATE_LIMIT_ATTEMPTS = 3;
           const BASE_RETRY_DELAY_MS = 15000;
 
           class RateLimitError extends Error {}
 
           async function fetchJson(url) {
-            for (let attempt = 0; attempt <= MAX_RATE_LIMIT_RETRIES; attempt++) {
+            for (let attempt = 1; attempt <= MAX_RATE_LIMIT_ATTEMPTS; attempt++) {
               const res = await fetch(url, { headers: { 'User-Agent': 'insiders-changes-site' } });
               if (res.ok) {
                 return res.json();
@@ -57,10 +57,10 @@ jobs:
 
               if (res.status === 429) {
                 const retryAfterSeconds = Number(res.headers.get('retry-after'));
-                if (attempt < MAX_RATE_LIMIT_RETRIES) {
+                if (attempt < MAX_RATE_LIMIT_ATTEMPTS) {
                   const delayMs = Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0
                     ? retryAfterSeconds * 1000
-                    : BASE_RETRY_DELAY_MS * (attempt + 1);
+                    : BASE_RETRY_DELAY_MS * attempt;
                   console.warn(`Rate limited fetching ${url}; retrying in ${Math.ceil(delayMs / 1000)}s.`);
                   await sleep(delayMs);
                   continue;
@@ -71,6 +71,8 @@ jobs:
 
               throw new Error(`Failed to fetch ${url}: ${res.status} ${res.statusText}`);
             }
+
+            throw new Error(`Failed to fetch ${url}: exhausted retry attempts`);
           }
 
           async function main() {
