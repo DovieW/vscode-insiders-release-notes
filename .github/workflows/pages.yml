@@ -63,6 +63,7 @@ jobs:
           }
 
           async function fetchJson(url) {
+            let lastRateLimitError = null;
             for (let attempt = 1; attempt <= MAX_RATE_LIMIT_ATTEMPTS; attempt++) {
               const res = await fetch(url, { headers: { 'User-Agent': 'insiders-changes-site' } });
               if (res.ok) {
@@ -78,13 +79,14 @@ jobs:
                   continue;
                 }
 
-                throw new RateLimitError(`Failed to fetch ${url}: 429 Too Many Requests`);
+                lastRateLimitError = new RateLimitError(`Failed to fetch ${url}: 429 Too Many Requests`);
+                break;
               }
 
               throw new Error(`Failed to fetch ${url}: ${res.status} ${res.statusText}`);
             }
 
-            throw new Error(`Failed to fetch ${url}: exhausted retry attempts`);
+            throw lastRateLimitError || new Error(`Failed to fetch ${url}: exhausted retry attempts`);
           }
 
           async function main() {
