@@ -35,7 +35,7 @@ function isTransientError(error) {
   if (error instanceof TransientFetchError) return true;
   if (!error || typeof error !== "object") return false;
 
-  return error instanceof TypeError || [
+  return (error instanceof TypeError && /fetch failed/i.test(error.message || "")) || [
     "AbortError",
     "ConnectTimeoutError",
     "HeadersTimeoutError",
