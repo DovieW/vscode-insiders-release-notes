@@ -1,4 +1,9 @@
 const { setTimeout: sleep } = require("timers/promises");
+const UNDICI_TRANSIENT_ERROR_CODES = [
+  "UND_ERR_CONNECT_TIMEOUT",
+  "UND_ERR_HEADERS_TIMEOUT",
+  "UND_ERR_SOCKET",
+];
 
 class TransientFetchError extends Error {
   constructor(message) {
@@ -18,7 +23,7 @@ function getRetryDelayMs(retryAfterHeader, attempt, baseDelayMs) {
     return Math.max(retryAfterDate - Date.now(), 0);
   }
 
-  return baseDelayMs * 2 ** (attempt - 1);
+  return baseDelayMs * attempt;
 }
 
 function isTransientStatus(status) {
@@ -29,18 +34,11 @@ function isTransientError(error) {
   if (error instanceof TransientFetchError) return true;
   if (!error || typeof error !== "object") return false;
 
-  return [
+  return error instanceof TypeError || [
     "AbortError",
     "ConnectTimeoutError",
     "HeadersTimeoutError",
-    "UND_ERR_CONNECT_TIMEOUT",
-    "UND_ERR_HEADERS_TIMEOUT",
-    "UND_ERR_SOCKET",
-  ].includes(error.name) || [
-    "UND_ERR_CONNECT_TIMEOUT",
-    "UND_ERR_HEADERS_TIMEOUT",
-    "UND_ERR_SOCKET",
-  ].includes(error.code);
+  ].includes(error.name) || UNDICI_TRANSIENT_ERROR_CODES.includes(error.code) || UNDICI_TRANSIENT_ERROR_CODES.includes(error.cause?.code);
 }
 
 async function fetchJsonWithRetry(
