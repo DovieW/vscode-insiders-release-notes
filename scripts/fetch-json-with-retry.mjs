@@ -85,7 +85,7 @@ export async function fetchJsonWithRetry(
         throw error;
       }
 
-      const message = `Failed to fetch ${url}: ${error.name}${error.message ? ` ${error.message}` : ""}`;
+      const message = `Failed to fetch ${url}: ${error.name}${error.message ? `: ${error.message}` : ""}`;
       lastTransientError = new TransientFetchError(message);
 
       if (attempt < maxAttempts) {
