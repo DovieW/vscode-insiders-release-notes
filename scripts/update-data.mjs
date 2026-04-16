@@ -4,6 +4,7 @@ import "dotenv/config";
 import OpenAI from "openai";
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import fetchRetry from "./fetch-json-with-retry.cjs";
 
 const DATA_DIR = new URL("../data/", import.meta.url).pathname;
 const STATE_PATH = join(DATA_DIR, "insiders-state.json");
@@ -31,6 +32,7 @@ const INSIDERS_COMMITS_FEED = "https://update.code.visualstudio.com/api/commits/
 
 const INSIDERS_UPDATE_API_BASE = "https://update.code.visualstudio.com/api/update";
 const INSIDERS_LATEST_AVAILABLE_UPDATE_URL = "https://update.code.visualstudio.com/api/update/win32-x64-user/insider/latest";
+const { fetchJsonWithRetry } = fetchRetry;
 
 function shortSha(sha) {
   return (sha || "").slice(0, 7);
@@ -130,19 +132,13 @@ async function getRepoFileJsonViaRaw(repo, sha, path) {
 }
 
 async function getInsidersBuildCommits() {
-  const res = await fetch(INSIDERS_COMMITS_FEED, { headers: { "User-Agent": "insiders-changes-site" } });
-  if (!res.ok) throw new Error(`Failed to fetch insiders commits feed: ${res.status} ${res.statusText}`);
-  const list = await res.json();
+  const list = await fetchJsonWithRetry(INSIDERS_COMMITS_FEED, { headers: { "User-Agent": "insiders-changes-site" } });
   if (!Array.isArray(list) || !list.length) throw new Error("Insiders commits feed returned no commits.");
   return list;
 }
 
 async function getLatestAvailableInsidersBuildSha() {
-  const res = await fetch(INSIDERS_LATEST_AVAILABLE_UPDATE_URL, { headers: { "User-Agent": "insiders-changes-site" } });
-  if (!res.ok) {
-    throw new Error(`Failed to fetch latest available Insiders build: ${res.status} ${res.statusText}`);
-  }
-  const json = await res.json();
+  const json = await fetchJsonWithRetry(INSIDERS_LATEST_AVAILABLE_UPDATE_URL, { headers: { "User-Agent": "insiders-changes-site" } });
   const sha = json?.version;
   if (!sha || typeof sha !== "string") throw new Error("Latest available Insiders response missing 'version' SHA.");
   return sha;
