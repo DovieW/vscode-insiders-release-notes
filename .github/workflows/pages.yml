@@ -3,7 +3,7 @@ name: Poll for new VS Code Insiders builds
 on:
   workflow_dispatch:
   schedule:
-    # Every hour (best-effort) to stay under upstream rate limits.
+    # Every hour (best-effort). Stay under upstream rate limits.
     - cron: "0 * * * *"
 
 permissions:
