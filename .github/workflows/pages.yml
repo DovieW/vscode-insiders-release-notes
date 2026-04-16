@@ -44,6 +44,7 @@ jobs:
           const feed = process.env.INSIDERS_COMMITS_FEED;
           const latestUpdateUrl = process.env.INSIDERS_LATEST_UPDATE_URL;
           const MAX_RATE_LIMIT_RETRIES = 2;
+          const BASE_RETRY_DELAY_MS = 15000;
 
           class RateLimitError extends Error {}
 
@@ -55,11 +56,11 @@ jobs:
               }
 
               if (res.status === 429) {
-                const retryAfter = Number(res.headers.get('retry-after'));
+                const retryAfterSeconds = Number(res.headers.get('retry-after'));
                 if (attempt < MAX_RATE_LIMIT_RETRIES) {
-                  const delayMs = Number.isFinite(retryAfter) && retryAfter > 0
-                    ? retryAfter * 1000
-                    : 15000 * (attempt + 1);
+                  const delayMs = Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0
+                    ? retryAfterSeconds * 1000
+                    : BASE_RETRY_DELAY_MS * (attempt + 1);
                   console.warn(`Rate limited fetching ${url}; retrying in ${Math.ceil(delayMs / 1000)}s.`);
                   await sleep(delayMs);
                   continue;
