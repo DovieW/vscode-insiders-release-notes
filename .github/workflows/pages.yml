@@ -3,8 +3,8 @@ name: Poll for new VS Code Insiders builds
 on:
   workflow_dispatch:
   schedule:
-    # Every 30 minutes (best-effort)
-    - cron: "*/30 * * * *"
+    # Every hour (best-effort). Stay under upstream rate limits.
+    - cron: "0 * * * *"
 
 permissions:
   contents: read
@@ -39,16 +39,61 @@ jobs:
         run: |
           node - <<'NODE'
           const fs = require('fs');
+          const { setTimeout: sleep } = require('timers/promises');
 
           const feed = process.env.INSIDERS_COMMITS_FEED;
           const latestUpdateUrl = process.env.INSIDERS_LATEST_UPDATE_URL;
+          const MAX_RATE_LIMIT_ATTEMPTS = 3;
+          const BASE_RETRY_DELAY_MS = 15000;
+
+          class RateLimitError extends Error {}
+
+          function getRetryDelayMs(retryAfterHeader, attempt) {
+            const retryAfterSeconds = Number(retryAfterHeader);
+            if (Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0) {
+              return retryAfterSeconds * 1000;
+            }
+
+            const retryAfterDate = Date.parse(retryAfterHeader || '');
+            if (Number.isFinite(retryAfterDate)) {
+              return Math.max(retryAfterDate - Date.now(), 0);
+            }
+
+            return BASE_RETRY_DELAY_MS * attempt;
+          }
+
+          async function fetchJson(url) {
+            let lastRateLimitError = null;
+            for (let attempt = 1; attempt <= MAX_RATE_LIMIT_ATTEMPTS; attempt++) {
+              const res = await fetch(url, { headers: { 'User-Agent': 'insiders-changes-site' } });
+              if (res.ok) {
+                return res.json();
+              }
+
+              if (res.status === 429) {
+                const retryAfterHeader = res.headers.get('retry-after');
+                if (attempt < MAX_RATE_LIMIT_ATTEMPTS) {
+                  const delayMs = getRetryDelayMs(retryAfterHeader, attempt);
+                  console.warn(`Rate limited fetching ${url}; retrying in ${Math.ceil(delayMs / 1000)}s.`);
+                  await sleep(delayMs);
+                  continue;
+                }
+
+                lastRateLimitError = new RateLimitError(`Failed to fetch ${url}: 429 Too Many Requests`);
+                break;
+              }
+
+              throw new Error(`Failed to fetch ${url}: ${res.status} ${res.statusText}`);
+            }
+
+            throw lastRateLimitError || new Error(`Failed to fetch ${url}: exhausted retry attempts`);
+          }
+
           async function main() {
             const state = JSON.parse(fs.readFileSync('data/insiders-state.json', 'utf8'));
             const last = state.lastProcessedBuildSha;
 
-            const res = await fetch(feed, { headers: { 'User-Agent': 'insiders-changes-site' } });
-            if (!res.ok) throw new Error(`Failed to fetch insiders commits feed: ${res.status} ${res.statusText}`);
-            const commits = await res.json();
+            const commits = await fetchJson(feed);
             if (!Array.isArray(commits) || commits.length === 0) throw new Error('Empty insiders commits feed');
 
             // Determine which build is actually available to users right now.
@@ -56,9 +101,7 @@ jobs:
             let availableSha = commits[0];
             let availableIdx = 0;
             if (latestUpdateUrl) {
-              const ures = await fetch(latestUpdateUrl, { headers: { 'User-Agent': 'insiders-changes-site' } });
-              if (!ures.ok) throw new Error(`Failed to fetch latest update JSON: ${ures.status} ${ures.statusText}`);
-              const latest = await ures.json();
+              const latest = await fetchJson(latestUpdateUrl);
               if (latest && typeof latest.version === 'string') {
                 availableSha = latest.version;
                 const idx = commits.indexOf(availableSha);
@@ -102,6 +145,11 @@ jobs:
           }
 
           main().catch((err) => {
+            if (err instanceof RateLimitError) {
+              console.warn(`${err.message}. Skipping this poll run.`);
+              fs.appendFileSync(process.env.GITHUB_OUTPUT, 'builds=[]\n');
+              process.exit(0);
+            }
             console.error(err);
             process.exit(1);
           });
