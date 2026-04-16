@@ -3,8 +3,8 @@ name: Poll for new VS Code Insiders builds
 on:
   workflow_dispatch:
   schedule:
-    # Every 30 minutes (best-effort)
-    - cron: "*/30 * * * *"
+    # Every hour (best-effort) to stay under upstream rate limits.
+    - cron: "0 * * * *"
 
 permissions:
   contents: read
@@ -39,16 +39,44 @@ jobs:
         run: |
           node - <<'NODE'
           const fs = require('fs');
+          const { setTimeout: sleep } = require('timers/promises');
 
           const feed = process.env.INSIDERS_COMMITS_FEED;
           const latestUpdateUrl = process.env.INSIDERS_LATEST_UPDATE_URL;
+          const MAX_RATE_LIMIT_RETRIES = 2;
+
+          class RateLimitError extends Error {}
+
+          async function fetchJson(url) {
+            for (let attempt = 0; attempt <= MAX_RATE_LIMIT_RETRIES; attempt++) {
+              const res = await fetch(url, { headers: { 'User-Agent': 'insiders-changes-site' } });
+              if (res.ok) {
+                return res.json();
+              }
+
+              if (res.status === 429) {
+                const retryAfter = Number(res.headers.get('retry-after'));
+                if (attempt < MAX_RATE_LIMIT_RETRIES) {
+                  const delayMs = Number.isFinite(retryAfter) && retryAfter > 0
+                    ? retryAfter * 1000
+                    : 15000 * (attempt + 1);
+                  console.warn(`Rate limited fetching ${url}; retrying in ${Math.ceil(delayMs / 1000)}s.`);
+                  await sleep(delayMs);
+                  continue;
+                }
+
+                throw new RateLimitError(`Failed to fetch ${url}: 429 Too Many Requests`);
+              }
+
+              throw new Error(`Failed to fetch ${url}: ${res.status} ${res.statusText}`);
+            }
+          }
+
           async function main() {
             const state = JSON.parse(fs.readFileSync('data/insiders-state.json', 'utf8'));
             const last = state.lastProcessedBuildSha;
 
-            const res = await fetch(feed, { headers: { 'User-Agent': 'insiders-changes-site' } });
-            if (!res.ok) throw new Error(`Failed to fetch insiders commits feed: ${res.status} ${res.statusText}`);
-            const commits = await res.json();
+            const commits = await fetchJson(feed);
             if (!Array.isArray(commits) || commits.length === 0) throw new Error('Empty insiders commits feed');
 
             // Determine which build is actually available to users right now.
@@ -56,9 +84,7 @@ jobs:
             let availableSha = commits[0];
             let availableIdx = 0;
             if (latestUpdateUrl) {
-              const ures = await fetch(latestUpdateUrl, { headers: { 'User-Agent': 'insiders-changes-site' } });
-              if (!ures.ok) throw new Error(`Failed to fetch latest update JSON: ${ures.status} ${ures.statusText}`);
-              const latest = await ures.json();
+              const latest = await fetchJson(latestUpdateUrl);
               if (latest && typeof latest.version === 'string') {
                 availableSha = latest.version;
                 const idx = commits.indexOf(availableSha);
@@ -102,6 +128,11 @@ jobs:
           }
 
           main().catch((err) => {
+            if (err instanceof RateLimitError) {
+              console.warn(`${err.message}. Skipping this poll run.`);
+              fs.appendFileSync(process.env.GITHUB_OUTPUT, 'builds=[]\n');
+              process.exit(0);
+            }
             console.error(err);
             process.exit(1);
           });
