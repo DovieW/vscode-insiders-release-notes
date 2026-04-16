@@ -1,11 +1,12 @@
-const { setTimeout: sleep } = require("timers/promises");
+import { setTimeout as sleep } from "node:timers/promises";
+
 const UNDICI_TRANSIENT_ERROR_CODES = [
   "UND_ERR_CONNECT_TIMEOUT",
   "UND_ERR_HEADERS_TIMEOUT",
   "UND_ERR_SOCKET",
 ];
 
-class TransientFetchError extends Error {
+export class TransientFetchError extends Error {
   constructor(message) {
     super(message);
     this.name = "TransientFetchError";
@@ -41,7 +42,7 @@ function isTransientError(error) {
   ].includes(error.name) || UNDICI_TRANSIENT_ERROR_CODES.includes(error.code) || UNDICI_TRANSIENT_ERROR_CODES.includes(error.cause?.code);
 }
 
-async function fetchJsonWithRetry(
+export async function fetchJsonWithRetry(
   url,
   {
     headers = {},
@@ -102,8 +103,3 @@ async function fetchJsonWithRetry(
 
   throw lastTransientError || new TransientFetchError(`Failed to fetch ${url}: exhausted retry attempts`);
 }
-
-module.exports = {
-  TransientFetchError,
-  fetchJsonWithRetry,
-};

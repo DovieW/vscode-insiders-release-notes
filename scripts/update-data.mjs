@@ -4,7 +4,7 @@ import "dotenv/config";
 import OpenAI from "openai";
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import fetchRetry from "./fetch-json-with-retry.cjs";
+import { fetchJsonWithRetry } from "./fetch-json-with-retry.mjs";
 
 const DATA_DIR = new URL("../data/", import.meta.url).pathname;
 const STATE_PATH = join(DATA_DIR, "insiders-state.json");
@@ -32,7 +32,6 @@ const INSIDERS_COMMITS_FEED = "https://update.code.visualstudio.com/api/commits/
 
 const INSIDERS_UPDATE_API_BASE = "https://update.code.visualstudio.com/api/update";
 const INSIDERS_LATEST_AVAILABLE_UPDATE_URL = "https://update.code.visualstudio.com/api/update/win32-x64-user/insider/latest";
-const { fetchJsonWithRetry } = fetchRetry;
 
 function shortSha(sha) {
   return (sha || "").slice(0, 7);

@@ -39,12 +39,14 @@ jobs:
         run: |
           node - <<'NODE'
           const fs = require('fs');
-          const { TransientFetchError, fetchJsonWithRetry } = require('./scripts/fetch-json-with-retry.cjs');
+          const { pathToFileURL } = require('url');
 
           const feed = process.env.INSIDERS_COMMITS_FEED;
           const latestUpdateUrl = process.env.INSIDERS_LATEST_UPDATE_URL;
+          const helperUrl = pathToFileURL(`${process.cwd()}/scripts/fetch-json-with-retry.mjs`).href;
 
           async function main() {
+            const { fetchJsonWithRetry } = await import(helperUrl);
             const state = JSON.parse(fs.readFileSync('data/insiders-state.json', 'utf8'));
             const last = state.lastProcessedBuildSha;
 
@@ -100,7 +102,7 @@ jobs:
           }
 
           main().catch((err) => {
-            if (err instanceof TransientFetchError) {
+            if (err?.name === 'TransientFetchError') {
               console.warn(`${err.message}. Skipping this poll run.`);
               fs.appendFileSync(process.env.GITHUB_OUTPUT, 'builds=[]\n');
               process.exit(0);
