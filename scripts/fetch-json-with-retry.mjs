@@ -35,11 +35,15 @@ function isTransientError(error) {
   if (error instanceof TransientFetchError) return true;
   if (!error || typeof error !== "object") return false;
 
-  return (error instanceof TypeError && /fetch failed/i.test(error.message || "")) || [
+  const isFetchFailedTypeError = error instanceof TypeError && /fetch failed/i.test(error.message || "");
+  const isKnownTransientErrorName = [
     "AbortError",
     "ConnectTimeoutError",
     "HeadersTimeoutError",
-  ].includes(error.name) || UNDICI_TRANSIENT_ERROR_CODES.includes(error.code) || UNDICI_TRANSIENT_ERROR_CODES.includes(error.cause?.code);
+  ].includes(error.name);
+  const hasTransientErrorCode = UNDICI_TRANSIENT_ERROR_CODES.includes(error.code) || UNDICI_TRANSIENT_ERROR_CODES.includes(error.cause?.code);
+
+  return isFetchFailedTypeError || isKnownTransientErrorName || hasTransientErrorCode;
 }
 
 export async function fetchJsonWithRetry(
@@ -101,5 +105,9 @@ export async function fetchJsonWithRetry(
     }
   }
 
-  throw lastTransientError || new TransientFetchError(`Failed to fetch ${url}: exhausted retry attempts`);
+  if (!lastTransientError) {
+    throw new Error(`Internal error: retry loop exited without a transient fetch error for ${url}`);
+  }
+
+  throw lastTransientError;
 }
