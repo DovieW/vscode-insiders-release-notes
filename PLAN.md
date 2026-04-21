@@ -9,7 +9,7 @@ Goal: generate a **per-build changelog page** for *actual VS Code Insiders build
   - Resolve the previous Insiders build SHA from the Insiders commits feed.
   - Fetch the compare range and collect **merged PRs included in that build** (commit → associated PRs).
   - **Fail if PR count > 100** (manual handling).
-  - Send PR info to OpenAI (`gpt-4.1-mini`) to generate a polished Markdown release note section.
+  - Send PR info to OpenAI (`gpt-5.4-nano`) to generate a polished Markdown release note section.
   - Write a **build page** to `docs/builds/*.md` (AI notes + PR list + metadata).
   - Update indexes and update `data/insiders-state.json`.
 

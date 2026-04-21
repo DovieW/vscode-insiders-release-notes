@@ -18,7 +18,7 @@ const TARGET_REPO = process.env.TARGET_REPO || "microsoft/vscode";
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4.1-mini";
+const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-5.4-nano";
 
 const OUT_DIR = join(new URL("../", import.meta.url).pathname, ".out");
 const OUT_RELEASE_NOTES_PATH = join(OUT_DIR, "release-notes.md");
