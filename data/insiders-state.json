@@ -1,7 +1,7 @@
 {
   "repo": "microsoft/vscode",
   "defaultBranch": "main",
-  "lastProcessedBuildSha": "7f0183b5513e174a343d718094d2ac8fc1a29246",
-  "lastProcessedVersion": "1.117.0-insider",
-  "lastProcessedAt": "2026-04-21T17:19:51.870Z"
+  "lastProcessedBuildSha": "acb6bc5dd1c6bfb1c3290ba394a9c857edde109b",
+  "lastProcessedVersion": "1.118.0-insider",
+  "lastProcessedAt": "2026-04-22T18:21:14.268Z"
 }
