@@ -47,6 +47,7 @@ jobs:
           const feed = process.env.INSIDERS_COMMITS_FEED;
           const latestUpdateUrl = process.env.INSIDERS_LATEST_UPDATE_URL;
           const helperUrl = pathToFileURL(resolve('scripts/fetch-json-with-retry.mjs')).href;
+          // Keep this aligned with timeout-minutes above so retries stop before GitHub cancels the job.
           const pollTimeoutMs = 60000;
           const pollStartedAt = Date.now();
 

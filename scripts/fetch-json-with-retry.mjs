@@ -53,7 +53,7 @@ export async function fetchJsonWithRetry(
     maxAttempts = 3,
     baseDelayMs = 15000,
     timeoutMs = 30000,
-    maxElapsedMs = null,
+    maxElapsedMs = undefined,
     fetchImpl = fetch,
   } = {},
 ) {
