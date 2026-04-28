@@ -54,7 +54,7 @@ jobs:
           function getPollFetchOptions() {
             return {
               headers: { 'User-Agent': 'insiders-changes-site' },
-              maxElapsedMs: Math.max(pollTimeoutMs - (Date.now() - pollStartedAt), 0),
+              maxElapsedMs: pollTimeoutMs - (Date.now() - pollStartedAt),
             };
           }
 
