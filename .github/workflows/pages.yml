@@ -51,15 +51,21 @@ jobs:
           const pollTimeoutMs = 60000;
           const pollStartedAt = Date.now();
 
-          function getPollFetchOptions() {
-            return {
-              headers: { 'User-Agent': 'insiders-changes-site' },
-              maxElapsedMs: Math.max(pollTimeoutMs - (Date.now() - pollStartedAt), 0),
-            };
-          }
-
           async function main() {
-            const { fetchJsonWithRetry } = await import(helperUrl);
+            const { fetchJsonWithRetry, TransientFetchError } = await import(helperUrl);
+
+            function getPollFetchOptions() {
+              const maxElapsedMs = pollTimeoutMs - (Date.now() - pollStartedAt);
+              if (maxElapsedMs <= 0) {
+                throw new TransientFetchError(`Poll budget exhausted after ${Math.ceil((Date.now() - pollStartedAt) / 1000)}s`);
+              }
+
+              return {
+                headers: { 'User-Agent': 'insiders-changes-site' },
+                maxElapsedMs,
+              };
+            }
+
             const state = JSON.parse(fs.readFileSync('data/insiders-state.json', 'utf8'));
             const last = state.lastProcessedBuildSha;
 

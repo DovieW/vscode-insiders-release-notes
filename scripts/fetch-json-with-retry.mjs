@@ -121,7 +121,7 @@ export async function fetchJsonWithRetry(
   }
 
   const elapsedMs = Date.now() - startedAt;
-  if (Number.isFinite(maxElapsedMs) && elapsedMs >= maxElapsedMs) {
+  if (Number.isFinite(maxElapsedMs) && (maxElapsedMs <= 0 || elapsedMs > maxElapsedMs)) {
     throw new TransientFetchError(`Timed out fetching ${url} after ${Math.ceil(elapsedMs / 1000)}s`);
   }
 
