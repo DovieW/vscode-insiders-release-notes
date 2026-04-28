@@ -119,7 +119,11 @@ export async function fetchJsonWithRetry(
   }
 
   if (!lastTransientError) {
-    throw new TransientFetchError(`Timed out fetching ${url} after ${Math.ceil(maxElapsedMs / 1000)}s`);
+    if (Number.isFinite(maxElapsedMs)) {
+      throw new TransientFetchError(`Timed out fetching ${url} after ${Math.ceil(maxElapsedMs / 1000)}s`);
+    }
+
+    throw new Error(`Internal error: retry loop exited without a transient fetch error for ${url}`);
   }
 
   throw lastTransientError;
