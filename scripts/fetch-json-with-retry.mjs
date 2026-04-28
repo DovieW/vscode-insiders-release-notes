@@ -53,14 +53,25 @@ export async function fetchJsonWithRetry(
     maxAttempts = 3,
     baseDelayMs = 15000,
     timeoutMs = 30000,
+    maxElapsedMs = null,
     fetchImpl = fetch,
   } = {},
 ) {
   let lastTransientError = null;
+  const startedAt = Date.now();
+
+  function getRemainingElapsedMs() {
+    if (!Number.isFinite(maxElapsedMs)) return Infinity;
+    return Math.max(maxElapsedMs - (Date.now() - startedAt), 0);
+  }
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const remainingElapsedMs = getRemainingElapsedMs();
+    if (remainingElapsedMs <= 0) break;
+
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+    const attemptTimeoutMs = Math.min(timeoutMs, remainingElapsedMs);
+    const timeoutId = setTimeout(() => controller.abort(), attemptTimeoutMs);
 
     try {
       const res = await fetchImpl(url, { headers, signal: controller.signal });
@@ -74,7 +85,8 @@ export async function fetchJsonWithRetry(
         lastTransientError = new TransientFetchError(message);
 
         if (attempt < maxAttempts) {
-          const delayMs = getRetryDelayMs(res.headers.get("retry-after"), attempt, baseDelayMs);
+          const delayMs = Math.min(getRetryDelayMs(res.headers.get("retry-after"), attempt, baseDelayMs), getRemainingElapsedMs());
+          if (delayMs <= 0) break;
           console.warn(`${message}; retrying in ${Math.ceil(delayMs / 1000)}s.`);
           await sleep(delayMs);
           continue;
@@ -93,7 +105,8 @@ export async function fetchJsonWithRetry(
       lastTransientError = new TransientFetchError(message);
 
       if (attempt < maxAttempts) {
-        const delayMs = getRetryDelayMs(null, attempt, baseDelayMs);
+        const delayMs = Math.min(getRetryDelayMs(null, attempt, baseDelayMs), getRemainingElapsedMs());
+        if (delayMs <= 0) break;
         console.warn(`${message}; retrying in ${Math.ceil(delayMs / 1000)}s.`);
         await sleep(delayMs);
         continue;
@@ -106,7 +119,7 @@ export async function fetchJsonWithRetry(
   }
 
   if (!lastTransientError) {
-    throw new Error(`Internal error: retry loop exited without a transient fetch error for ${url}`);
+    throw new TransientFetchError(`Timed out fetching ${url} after ${Math.ceil(maxElapsedMs / 1000)}s`);
   }
 
   throw lastTransientError;

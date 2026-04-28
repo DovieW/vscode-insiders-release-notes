@@ -17,6 +17,7 @@ concurrency:
 jobs:
   poll:
     runs-on: ubuntu-latest
+    timeout-minutes: 1
 
     steps:
       - name: Checkout
@@ -31,6 +32,7 @@ jobs:
 
       - name: Determine builds to process (max 3)
         id: builds
+        timeout-minutes: 1
         env:
           INSIDERS_COMMITS_FEED: https://update.code.visualstudio.com/api/commits/insider
           # Gate generation so we only publish builds that are actually available for users to install.
@@ -45,13 +47,17 @@ jobs:
           const feed = process.env.INSIDERS_COMMITS_FEED;
           const latestUpdateUrl = process.env.INSIDERS_LATEST_UPDATE_URL;
           const helperUrl = pathToFileURL(resolve('scripts/fetch-json-with-retry.mjs')).href;
+          const pollFetchOptions = {
+            headers: { 'User-Agent': 'insiders-changes-site' },
+            maxElapsedMs: 60000,
+          };
 
           async function main() {
             const { fetchJsonWithRetry } = await import(helperUrl);
             const state = JSON.parse(fs.readFileSync('data/insiders-state.json', 'utf8'));
             const last = state.lastProcessedBuildSha;
 
-            const commits = await fetchJsonWithRetry(feed, { headers: { 'User-Agent': 'insiders-changes-site' } });
+            const commits = await fetchJsonWithRetry(feed, pollFetchOptions);
             if (!Array.isArray(commits) || commits.length === 0) throw new Error('Empty insiders commits feed');
 
             // Determine which build is actually available to users right now.
@@ -59,7 +65,7 @@ jobs:
             let availableSha = commits[0];
             let availableIdx = 0;
             if (latestUpdateUrl) {
-              const latest = await fetchJsonWithRetry(latestUpdateUrl, { headers: { 'User-Agent': 'insiders-changes-site' } });
+              const latest = await fetchJsonWithRetry(latestUpdateUrl, pollFetchOptions);
               if (latest && typeof latest.version === 'string') {
                 availableSha = latest.version;
                 const idx = commits.indexOf(availableSha);
@@ -115,6 +121,7 @@ jobs:
 
       - name: Dispatch build workflow
         if: ${{ steps.builds.outputs.builds != '[]' }}
+        timeout-minutes: 1
         env:
           GH_REPO: ${{ github.repository }}
           GH_TOKEN: ${{ github.token }}

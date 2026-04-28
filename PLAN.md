@@ -19,7 +19,7 @@ Goal: generate a **per-build changelog page** for *actual VS Code Insiders build
   - Theme, navigation, and sidebar come from VitePress.
 
 - **GitHub Actions + GitHub Pages**
-  - **Poll workflow** (every 30 minutes): checks for new Insiders builds and dispatches the build workflow.
+  - **Poll workflow** (hourly): checks for new Insiders builds and dispatches the build workflow.
     - Detection source of truth: `https://update.code.visualstudio.com/api/commits/insider`
     - Canonical “latest build” endpoint (Windows): `https://update.code.visualstudio.com/api/update/win32-x64-archive/insider/latest`
     - Backfill policy: run up to **3** builds if multiple are missed.
