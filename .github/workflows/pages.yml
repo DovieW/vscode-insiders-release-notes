@@ -58,7 +58,7 @@ jobs:
             function getPollFetchOptions() {
               const maxElapsedMs = pollTimeoutMs - (Date.now() - pollStartedAt);
               if (maxElapsedMs <= 0) {
-                throw new TransientFetchError(`Poll budget exhausted after ${Math.ceil((Date.now() - pollStartedAt) / 1000)}s`);
+                throw new TransientFetchError(`Poll budget exhausted after ${Date.now() - pollStartedAt}ms`);
               }
 
               return {
