@@ -60,7 +60,7 @@ export async function fetchJsonWithRetry(
   let lastTransientError = null;
   const startedAt = Date.now();
   if (Number.isFinite(maxElapsedMs) && maxElapsedMs <= 0) {
-    throw new TransientFetchError(`Timed out fetching ${url} after 0s`);
+    throw new TransientFetchError(`Timed out fetching ${url} before starting because maxElapsedMs was ${maxElapsedMs}ms`);
   }
 
   function getRemainingElapsedMs() {
@@ -124,7 +124,7 @@ export async function fetchJsonWithRetry(
   }
 
   const elapsedMs = Date.now() - startedAt;
-  if (Number.isFinite(maxElapsedMs) && elapsedMs > maxElapsedMs) {
+  if (Number.isFinite(maxElapsedMs) && getRemainingElapsedMs() <= 0) {
     throw new TransientFetchError(`Timed out fetching ${url} after ${Math.ceil(elapsedMs / 1000)}s`);
   }
 
