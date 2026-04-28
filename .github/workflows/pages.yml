@@ -32,7 +32,6 @@ jobs:
 
       - name: Determine builds to process (max 3)
         id: builds
-        timeout-minutes: 1
         env:
           INSIDERS_COMMITS_FEED: https://update.code.visualstudio.com/api/commits/insider
           # Gate generation so we only publish builds that are actually available for users to install.
@@ -128,7 +127,6 @@ jobs:
 
       - name: Dispatch build workflow
         if: ${{ steps.builds.outputs.builds != '[]' }}
-        timeout-minutes: 1
         env:
           GH_REPO: ${{ github.repository }}
           GH_TOKEN: ${{ github.token }}
