@@ -53,6 +53,7 @@ jobs:
 
           async function main() {
             const { fetchJsonWithRetry, TransientFetchError } = await import(helperUrl);
+            const pollHeaders = { 'User-Agent': 'insiders-changes-site' };
 
             function getPollFetchOptions() {
               const maxElapsedMs = pollTimeoutMs - (Date.now() - pollStartedAt);
@@ -61,7 +62,7 @@ jobs:
               }
 
               return {
-                headers: { 'User-Agent': 'insiders-changes-site' },
+                headers: pollHeaders,
                 maxElapsedMs,
               };
             }
