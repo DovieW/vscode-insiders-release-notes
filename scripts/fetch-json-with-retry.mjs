@@ -85,8 +85,9 @@ export async function fetchJsonWithRetry(
         lastTransientError = new TransientFetchError(message);
 
         if (attempt < maxAttempts) {
-          const delayMs = Math.min(getRetryDelayMs(res.headers.get("retry-after"), attempt, baseDelayMs), getRemainingElapsedMs());
-          if (delayMs <= 0) break;
+          const remainingBeforeDelayMs = getRemainingElapsedMs();
+          const delayMs = getRetryDelayMs(res.headers.get("retry-after"), attempt, baseDelayMs);
+          if (delayMs >= remainingBeforeDelayMs) break;
           console.warn(`${message}; retrying in ${Math.ceil(delayMs / 1000)}s.`);
           await sleep(delayMs);
           continue;
@@ -105,8 +106,9 @@ export async function fetchJsonWithRetry(
       lastTransientError = new TransientFetchError(message);
 
       if (attempt < maxAttempts) {
-        const delayMs = Math.min(getRetryDelayMs(null, attempt, baseDelayMs), getRemainingElapsedMs());
-        if (delayMs <= 0) break;
+        const remainingBeforeDelayMs = getRemainingElapsedMs();
+        const delayMs = getRetryDelayMs(null, attempt, baseDelayMs);
+        if (delayMs >= remainingBeforeDelayMs) break;
         console.warn(`${message}; retrying in ${Math.ceil(delayMs / 1000)}s.`);
         await sleep(delayMs);
         continue;
