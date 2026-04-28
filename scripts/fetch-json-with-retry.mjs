@@ -5,6 +5,7 @@ const UNDICI_TRANSIENT_ERROR_CODES = [
   "UND_ERR_HEADERS_TIMEOUT",
   "UND_ERR_SOCKET",
 ];
+const MIN_RETRY_BUDGET_MS = 100;
 
 export class TransientFetchError extends Error {
   constructor(message) {
@@ -53,14 +54,28 @@ export async function fetchJsonWithRetry(
     maxAttempts = 3,
     baseDelayMs = 15000,
     timeoutMs = 30000,
+    maxElapsedMs = undefined,
     fetchImpl = fetch,
   } = {},
 ) {
   let lastTransientError = null;
+  const startedAt = Date.now();
+  if (Number.isFinite(maxElapsedMs) && maxElapsedMs <= 0) {
+    throw new TransientFetchError(`Timed out fetching ${url} because the maxElapsedMs budget was already exhausted (${maxElapsedMs}ms remaining)`);
+  }
+
+  function getRemainingElapsedMs() {
+    if (!Number.isFinite(maxElapsedMs)) return Infinity;
+    return Math.max(maxElapsedMs - (Date.now() - startedAt), 0);
+  }
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const remainingElapsedMs = getRemainingElapsedMs();
+    if (remainingElapsedMs <= 0) break;
+
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+    const attemptTimeoutMs = Math.min(timeoutMs, remainingElapsedMs);
+    const timeoutId = setTimeout(() => controller.abort(), attemptTimeoutMs);
 
     try {
       const res = await fetchImpl(url, { headers, signal: controller.signal });
@@ -74,7 +89,9 @@ export async function fetchJsonWithRetry(
         lastTransientError = new TransientFetchError(message);
 
         if (attempt < maxAttempts) {
+          const remainingBeforeDelayMs = getRemainingElapsedMs();
           const delayMs = getRetryDelayMs(res.headers.get("retry-after"), attempt, baseDelayMs);
+          if (delayMs + MIN_RETRY_BUDGET_MS >= remainingBeforeDelayMs) break;
           console.warn(`${message}; retrying in ${Math.ceil(delayMs / 1000)}s.`);
           await sleep(delayMs);
           continue;
@@ -93,7 +110,9 @@ export async function fetchJsonWithRetry(
       lastTransientError = new TransientFetchError(message);
 
       if (attempt < maxAttempts) {
+        const remainingBeforeDelayMs = getRemainingElapsedMs();
         const delayMs = getRetryDelayMs(null, attempt, baseDelayMs);
+        if (delayMs + MIN_RETRY_BUDGET_MS >= remainingBeforeDelayMs) break;
         console.warn(`${message}; retrying in ${Math.ceil(delayMs / 1000)}s.`);
         await sleep(delayMs);
         continue;
@@ -103,6 +122,11 @@ export async function fetchJsonWithRetry(
     } finally {
       clearTimeout(timeoutId);
     }
+  }
+
+  const elapsedMs = Date.now() - startedAt;
+  if (Number.isFinite(maxElapsedMs) && getRemainingElapsedMs() <= 0) {
+    throw new TransientFetchError(`Timed out fetching ${url} after ${Math.ceil(elapsedMs / 1000)}s`);
   }
 
   if (!lastTransientError) {

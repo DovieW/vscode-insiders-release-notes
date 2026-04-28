@@ -17,6 +17,7 @@ concurrency:
 jobs:
   poll:
     runs-on: ubuntu-latest
+    timeout-minutes: 1
 
     steps:
       - name: Checkout
@@ -45,13 +46,31 @@ jobs:
           const feed = process.env.INSIDERS_COMMITS_FEED;
           const latestUpdateUrl = process.env.INSIDERS_LATEST_UPDATE_URL;
           const helperUrl = pathToFileURL(resolve('scripts/fetch-json-with-retry.mjs')).href;
+          // Keep this aligned with timeout-minutes above so retries stop before GitHub cancels the job.
+          // This is a shared budget: if the first fetch consumes it, the poll skips rather than exceeding 1 minute.
+          const pollTimeoutMs = 60000;
+          const pollStartedAt = Date.now();
 
           async function main() {
-            const { fetchJsonWithRetry } = await import(helperUrl);
+            const { fetchJsonWithRetry, TransientFetchError } = await import(helperUrl);
+            const pollHeaders = { 'User-Agent': 'insiders-changes-site' };
+
+            function getPollFetchOptions() {
+              const maxElapsedMs = pollTimeoutMs - (Date.now() - pollStartedAt);
+              if (maxElapsedMs <= 0) {
+                throw new TransientFetchError(`Poll budget exhausted after ${Date.now() - pollStartedAt}ms`);
+              }
+
+              return {
+                headers: pollHeaders,
+                maxElapsedMs,
+              };
+            }
+
             const state = JSON.parse(fs.readFileSync('data/insiders-state.json', 'utf8'));
             const last = state.lastProcessedBuildSha;
 
-            const commits = await fetchJsonWithRetry(feed, { headers: { 'User-Agent': 'insiders-changes-site' } });
+            const commits = await fetchJsonWithRetry(feed, getPollFetchOptions());
             if (!Array.isArray(commits) || commits.length === 0) throw new Error('Empty insiders commits feed');
 
             // Determine which build is actually available to users right now.
@@ -59,7 +78,7 @@ jobs:
             let availableSha = commits[0];
             let availableIdx = 0;
             if (latestUpdateUrl) {
-              const latest = await fetchJsonWithRetry(latestUpdateUrl, { headers: { 'User-Agent': 'insiders-changes-site' } });
+              const latest = await fetchJsonWithRetry(latestUpdateUrl, getPollFetchOptions());
               if (latest && typeof latest.version === 'string') {
                 availableSha = latest.version;
                 const idx = commits.indexOf(availableSha);
