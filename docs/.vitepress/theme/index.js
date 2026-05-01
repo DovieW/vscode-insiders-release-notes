@@ -140,9 +140,157 @@ export default {
   enhanceApp({ router }) {
     if (!inBrowser) return;
 
+    function injectSidebarSearch() {
+      // Only inject once
+      if (document.querySelector('.vp-sidebar-search')) return;
+      // Find nav container (VitePress default class)
+      const nav = document.querySelector('.VPSidebar nav');
+      if (!nav) return;
+      // Find the first .group inside nav
+      const firstGroup = nav.querySelector('.group');
+      if (!firstGroup) return;
+      // Create the search filter div
+      const searchDiv = document.createElement('div');
+      searchDiv.className = 'vp-sidebar-search';
+      searchDiv.innerHTML = `<input type="text" placeholder="Filter builds..." aria-label="Filter builds" />`;
+      nav.insertBefore(searchDiv, firstGroup);
+
+      const input = searchDiv.querySelector('input');
+      input.addEventListener('input', function () {
+        filterSidebarBuilds(this.value);
+      });
+    }
+
+    // Prefetch and cache build file contents for filtering
+    const buildContentCache = {};
+    async function fetchBuildContent(href) {
+      if (buildContentCache[href]) return buildContentCache[href];
+      try {
+        let url = href;
+        // Convert .html or extensionless to .md for raw markdown fetch
+        url = url.replace(/\.html$/, '');
+        // Remove trailing slash if present
+        url = url.replace(/\/$/, '');
+        if (!url.endsWith('.md')) url += '.md';
+        // Ensure leading slash
+        if (!url.startsWith('/')) url = '/' + url;
+        console.log('[fetchBuildContent] Fetching:', url);
+        const res = await fetch(url);
+        if (!res.ok) {
+          console.warn('[fetchBuildContent] Failed to fetch:', url, res.status);
+          return '';
+        }
+        const text = await res.text();
+        buildContentCache[href] = text;
+        return text;
+      } catch (e) {
+        console.error('[fetchBuildContent] Error fetching', href, e);
+        return '';
+      }
+    }
+
+    async function filterSidebarBuilds(query) {
+      console.log('[DEBUG] filterSidebarBuilds called with query:', query);
+      const sidebar = document.querySelector('.VPSidebar');
+      if (!sidebar) return;
+      const links = sidebar.querySelectorAll('a');
+      const q = String(query || '').toLowerCase();
+      console.log('[filterSidebarBuilds] Filtering for:', q);
+      const promises = [];
+      for (const a of links) {
+        const href = a.getAttribute('href') || '';
+        if (!href.includes('/builds/')) continue;
+        if (href.endsWith('/builds/')) {
+          a.style.display = '';
+          continue;
+        }
+        // Prefetch and filter by content
+        promises.push((async () => {
+          if (!q) {
+            a.style.display = '';
+            return;
+          }
+          const content = await fetchBuildContent(href);
+          if (links[0] === a) {
+            // Log the first link's content and query for debugging
+            console.log('[filterSidebarBuilds] DEBUG: Query:', q, 'Fetched content:', content.slice(0, 500));
+          }
+          const match = content.toLowerCase().includes(q);
+          if (match) {
+            a.style.display = '';
+          } else {
+            a.style.display = 'none';
+          }
+        })());
+      }
+      await Promise.all(promises);
+
+      // Expand/collapse groups based on matches
+      // Debug: log sidebar structure
+      console.log('[DEBUG] Sidebar element:', sidebar);
+      console.log('[DEBUG] Sidebar innerHTML:', sidebar.innerHTML);
+      const allChildren = Array.from(sidebar.children).map(e => ({tag: e.tagName, class: e.className, id: e.id}));
+      console.log('[DEBUG] Sidebar children:', allChildren);
+
+      // Use correct selector for sidebar groups/items
+      const groups = sidebar.querySelectorAll('div.group > section.VPSidebarItem.level-0');
+      console.log('[DEBUG] Number of groups:', groups.length);
+      if (groups.length === 0) {
+        console.warn('[filterSidebarBuilds] No sidebar groups found. Check selector.');
+        return;
+      }
+      // Helper: check if a group (item) has a visible link in its direct .items
+      function groupHasVisibleLinks(group) {
+        const items = group.querySelector('.items');
+        if (!items) return false;
+        const visibleLinks = items.querySelectorAll('a:not([style*="display: none"])');
+        console.log('[DEBUG] group label:', group.textContent.trim().slice(0, 30), 'visibleLinks:', visibleLinks.length);
+        return visibleLinks.length > 0;
+      }
+
+      if (q) {
+        // Filter is active: expand all groups (items) whose .items has a visible link, hide/collapse all others
+        for (const group of groups) {
+          // The toggle is the .item div inside the group
+          const toggle = group.querySelector('.item');
+          const hasVisible = groupHasVisibleLinks(group);
+          console.log('[DEBUG] group:', group.textContent.trim().slice(0, 30), 'hasVisible:', hasVisible);
+          group.style.display = hasVisible ? '' : 'none';
+          if (hasVisible) {
+            group.classList.remove('collapsed');
+            group.classList.add('open');
+            if (toggle) toggle.setAttribute('aria-expanded', 'true');
+          } else {
+            group.classList.remove('open');
+            group.classList.add('collapsed');
+            if (toggle) toggle.setAttribute('aria-expanded', 'false');
+          }
+        }
+      } else {
+        // Filter is empty: expand only the first version group (index 1), collapse all others
+        for (let i = 0; i < groups.length; i++) {
+          const group = groups[i];
+          const toggle = group.querySelector('.item');
+          group.style.display = '';
+          if (i === 1) {
+            group.classList.remove('collapsed');
+            group.classList.add('open');
+            if (toggle) toggle.setAttribute('aria-expanded', 'true');
+          } else {
+            group.classList.remove('open');
+            group.classList.add('collapsed');
+            if (toggle) toggle.setAttribute('aria-expanded', 'false');
+          }
+        }
+      }
+    }
+
     const run = () => {
       // Let VitePress update the DOM first.
-      requestAnimationFrame(() => updateBuildTitles());
+      requestAnimationFrame(() => {
+        updateBuildTitles();
+        injectSidebarSearch();
+      });
     };
 
     run();
