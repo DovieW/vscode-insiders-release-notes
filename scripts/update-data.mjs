@@ -19,6 +19,8 @@ const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-5.4-nano";
+const DEFAULT_MAX_PRS_PER_BUILD = 100;
+const MAX_PRS_PER_BUILD = getMaxPrsPerBuild();
 
 const OUT_DIR = join(new URL("../", import.meta.url).pathname, ".out");
 const OUT_RELEASE_NOTES_PATH = join(OUT_DIR, "release-notes.md");
@@ -32,6 +34,18 @@ const INSIDERS_COMMITS_FEED = "https://update.code.visualstudio.com/api/commits/
 
 const INSIDERS_UPDATE_API_BASE = "https://update.code.visualstudio.com/api/update";
 const INSIDERS_LATEST_AVAILABLE_UPDATE_URL = "https://update.code.visualstudio.com/api/update/win32-x64-user/insider/latest";
+
+function getMaxPrsPerBuild() {
+  const raw = String(process.env.MAX_PRS_PER_BUILD || "").trim();
+  if (!raw) return DEFAULT_MAX_PRS_PER_BUILD;
+
+  const value = Number.parseInt(raw, 10);
+  if (!Number.isInteger(value) || value <= 0) {
+    throw new Error(`MAX_PRS_PER_BUILD must be a positive integer, got '${raw}'.`);
+  }
+
+  return value;
+}
 
 function shortSha(sha) {
   return (sha || "").slice(0, 7);
@@ -799,8 +813,11 @@ async function main() {
   const compareUrl = compare?.html_url || `https://github.com/${TARGET_REPO}/compare/${previousSha}...${buildSha}`;
 
   const pullRequests = await collectMergedPullRequestsForRange({ repo: TARGET_REPO, commits });
-  if (pullRequests.length > 100) {
-    throw new Error(`Too many PRs for this build (${pullRequests.length}). Refusing to generate; handle manually.`);
+  if (pullRequests.length > MAX_PRS_PER_BUILD) {
+    throw new Error(
+      `Too many PRs for this build (${pullRequests.length}). ` +
+      `Limit is ${MAX_PRS_PER_BUILD}; raise MAX_PRS_PER_BUILD or handle manually.`,
+    );
   }
 
   const { explainersByNumber, tokenUsage } = await generateAiExplainers({
