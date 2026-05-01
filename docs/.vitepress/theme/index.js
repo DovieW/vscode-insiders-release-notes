@@ -174,10 +174,8 @@ export default {
         if (!url.endsWith('.md')) url += '.md';
         // Ensure leading slash
         if (!url.startsWith('/')) url = '/' + url;
-        console.log('[fetchBuildContent] Fetching:', url);
         const res = await fetch(url);
         if (!res.ok) {
-          console.warn('[fetchBuildContent] Failed to fetch:', url, res.status);
           return '';
         }
         const text = await res.text();
@@ -190,12 +188,10 @@ export default {
     }
 
     async function filterSidebarBuilds(query) {
-      console.log('[DEBUG] filterSidebarBuilds called with query:', query);
       const sidebar = document.querySelector('.VPSidebar');
       if (!sidebar) return;
       const links = sidebar.querySelectorAll('a');
       const q = String(query || '').toLowerCase();
-      console.log('[filterSidebarBuilds] Filtering for:', q);
       const promises = [];
       for (const a of links) {
         const href = a.getAttribute('href') || '';
@@ -211,10 +207,6 @@ export default {
             return;
           }
           const content = await fetchBuildContent(href);
-          if (links[0] === a) {
-            // Log the first link's content and query for debugging
-            console.log('[filterSidebarBuilds] DEBUG: Query:', q, 'Fetched content:', content.slice(0, 500));
-          }
           const match = content.toLowerCase().includes(q);
           if (match) {
             a.style.display = '';
@@ -225,18 +217,11 @@ export default {
       }
       await Promise.all(promises);
 
-      // Expand/collapse groups based on matches
-      // Debug: log sidebar structure
-      console.log('[DEBUG] Sidebar element:', sidebar);
-      console.log('[DEBUG] Sidebar innerHTML:', sidebar.innerHTML);
-      const allChildren = Array.from(sidebar.children).map(e => ({tag: e.tagName, class: e.className, id: e.id}));
-      console.log('[DEBUG] Sidebar children:', allChildren);
 
       // Use correct selector for sidebar groups/items
       const groups = sidebar.querySelectorAll('div.group > section.VPSidebarItem.level-0');
-      console.log('[DEBUG] Number of groups:', groups.length);
       if (groups.length === 0) {
-        console.warn('[filterSidebarBuilds] No sidebar groups found. Check selector.');
+        // Keep silent if no groups found
         return;
       }
       // Helper: check if a group (item) has a visible link in its direct .items
@@ -244,7 +229,6 @@ export default {
         const items = group.querySelector('.items');
         if (!items) return false;
         const visibleLinks = items.querySelectorAll('a:not([style*="display: none"])');
-        console.log('[DEBUG] group label:', group.textContent.trim().slice(0, 30), 'visibleLinks:', visibleLinks.length);
         return visibleLinks.length > 0;
       }
 
@@ -254,7 +238,6 @@ export default {
           // The toggle is the .item div inside the group
           const toggle = group.querySelector('.item');
           const hasVisible = groupHasVisibleLinks(group);
-          console.log('[DEBUG] group:', group.textContent.trim().slice(0, 30), 'hasVisible:', hasVisible);
           group.style.display = hasVisible ? '' : 'none';
           if (hasVisible) {
             group.classList.remove('collapsed');
