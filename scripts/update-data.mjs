@@ -236,11 +236,15 @@ function mdEscapeInline(text) {
 
 function mdEscapeEmphasis(text) {
   // Escape characters that commonly break bold/italic markdown.
+  // Also escape HTML special characters to prevent Vue parser errors on unclosed tags.
   return mdEscapeInline(text)
     .replaceAll("\\", "\\\\")
     .replaceAll("*", "\\*")
     .replaceAll("_", "\\_")
-    .replaceAll("`", "\\`");
+    .replaceAll("`", "\\`")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
 }
 
 async function getInsidersInstallerLinksForBuild(buildSha) {
@@ -430,10 +434,23 @@ function extractJsonObjectFromText(raw) {
   }
 }
 
+function sanitizeExplainerForMarkdown(text) {
+  // Escape HTML special characters to prevent Vue parser from attempting to parse them as tags.
+  // This prevents "Element is missing end tag" errors when explainer contains < > or &.
+  let t = String(text || "");
+  // Escape & first to avoid double-escaping
+  t = t.replaceAll("&", "&amp;");
+  t = t.replaceAll("<", "&lt;");
+  t = t.replaceAll(">", "&gt;");
+  return t;
+}
+
 function clampExplainer(text) {
-  const t = String(text || "").replaceAll("\r", "").replaceAll("\n", " ").trim();
+  let t = String(text || "").replaceAll("\r", "").replaceAll("\n", " ").trim();
   if (!t) return "Internal maintenance/refactoring; no user-visible change expected.";
-  return t.length > 220 ? (t.slice(0, 217).trimEnd() + "...") : t;
+  t = t.length > 220 ? (t.slice(0, 217).trimEnd() + "...") : t;
+  // Sanitize for markdown/Vue safety
+  return sanitizeExplainerForMarkdown(t);
 }
 
 function normalizePrChangeLabel(labelRaw) {
@@ -535,7 +552,9 @@ function buildExplainersMarkdown({ pullRequests, explainersByNumber }) {
         lines.push(`- **${title || "(untitled change)"}**`);
       }
       // Use a markdown quote instead of a nested list item.
-      lines.push(`  > ${entry.explainer}`);
+      // entry.explainer is already sanitized by clampExplainer, but re-sanitize for safety
+      const sanitized = sanitizeExplainerForMarkdown(entry.explainer);
+      lines.push(`  > ${sanitized}`);
     }
 
     lines.push("");
