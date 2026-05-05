@@ -153,6 +153,7 @@ jobs:
           const transientErrorCodes = new Set(['UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_HEADERS_TIMEOUT', 'UND_ERR_SOCKET']);
           // Keep this below the 1 minute job timeout so GitHub has time to clean up.
           const dispatchBudgetMs = 45000;
+          const minBudgetBufferMs = 1000;
           const dispatchStartedAt = Date.now();
 
           function getRemainingBudgetMs() {
@@ -200,7 +201,7 @@ jobs:
                 }
 
                 const delayMs = Math.min(5000 * attempt, 15000);
-                if (delayMs + 1000 >= getRemainingBudgetMs()) {
+                if (delayMs + minBudgetBufferMs >= getRemainingBudgetMs()) {
                   console.warn(`${message}. Treating this as transient and deferring the remaining builds to the next poll.`);
                   return { ok: false, transient: true };
                 }
@@ -214,7 +215,7 @@ jobs:
 
                 const message = `Dispatch failed for ${buildSha}: ${error.name}${error.message ? `: ${error.message}` : ''}`;
                 const delayMs = Math.min(5000 * attempt, 15000);
-                if (delayMs + 1000 >= getRemainingBudgetMs()) {
+                if (delayMs + minBudgetBufferMs >= getRemainingBudgetMs()) {
                   console.warn(`${message}. Treating this as transient and deferring the remaining builds to the next poll.`);
                   return { ok: false, transient: true };
                 }
