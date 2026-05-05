@@ -151,7 +151,7 @@ jobs:
           const transientStatuses = new Set([408, 429, 500, 502, 503, 504]);
           const transientErrorNames = new Set(['AbortError', 'ConnectTimeoutError', 'HeadersTimeoutError']);
           const transientErrorCodes = new Set(['UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_HEADERS_TIMEOUT', 'UND_ERR_SOCKET']);
-          // Keep this below jobs.poll.timeout-minutes so GitHub has time to clean up.
+          // Keep this below jobs.poll.timeout-minutes; 45s leaves ~15s of headroom for cleanup in a 60s job.
           const dispatchBudgetMs = 45000;
           const minBudgetBufferMs = 1000;
           const dispatchStartedAt = Date.now();
@@ -169,6 +169,7 @@ jobs:
           }
 
           function calculateRetryDelay(attempt) {
+            // Linear backoff: 5s, 10s, then cap at 15s for later attempts.
             return Math.min(5000 * attempt, 15000);
           }
 
