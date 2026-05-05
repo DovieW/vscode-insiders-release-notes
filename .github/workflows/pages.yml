@@ -140,37 +140,111 @@ jobs:
           BUILDS: ${{ steps.builds.outputs.builds }}
         run: |
           node - <<'NODE'
+          const { setTimeout: sleep } = require('timers/promises');
+
           const builds = JSON.parse(process.env.BUILDS || '[]');
           if (!builds.length) {
             console.log('No builds to dispatch.');
             process.exit(0);
           }
 
+          const transientStatuses = new Set([408, 429, 500, 502, 503, 504]);
+          const transientErrorNames = new Set(['AbortError', 'ConnectTimeoutError', 'HeadersTimeoutError']);
+          const transientErrorCodes = new Set(['UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_HEADERS_TIMEOUT', 'UND_ERR_SOCKET']);
+          // Keep this below jobs.poll.timeout-minutes; 45s leaves ~15s of headroom for cleanup in a 60s job.
+          const dispatchBudgetMs = 45000;
+          const minBudgetBufferMs = 1000;
+          const dispatchStartedAt = Date.now();
+
+          function getRemainingBudgetMs() {
+            return Math.max(dispatchBudgetMs - (Date.now() - dispatchStartedAt), 0);
+          }
+
+          function isTransientError(error) {
+            if (!error || typeof error !== 'object') return false;
+            const isFetchFailedTypeError = error instanceof TypeError && /fetch failed/i.test(error.message || '');
+            const isKnownTransientErrorName = transientErrorNames.has(error.name);
+            const hasTransientErrorCode = transientErrorCodes.has(error.code) || transientErrorCodes.has(error.cause?.code);
+            return isFetchFailedTypeError || isKnownTransientErrorName || hasTransientErrorCode;
+          }
+
+          function calculateRetryDelay(attempt) {
+            // Linear backoff: 5s, 10s, then cap at 15s for later attempts.
+            return Math.min(5000 * attempt, 15000);
+          }
+
+          function formatDispatchError(buildSha, details) {
+            return `Dispatch failed for ${buildSha}: ${details}`;
+          }
+
           async function dispatch(buildSha) {
             const url = `https://api.github.com/repos/${process.env.GH_REPO}/actions/workflows/build.yml/dispatches`;
-            const res = await fetch(url, {
-              method: 'POST',
-              headers: {
-                'Accept': 'application/vnd.github+json',
-                'Authorization': `Bearer ${process.env.GH_TOKEN}`,
-                'X-GitHub-Api-Version': '2022-11-28',
-              },
-              body: JSON.stringify({
-                ref: 'master',
-                inputs: { buildSha },
-              }),
-            });
+            let attempt = 0;
 
-            if (!res.ok) {
-              const text = await res.text();
-              throw new Error(`Dispatch failed for ${buildSha}: ${res.status} ${res.statusText} ${text}`);
+            while (getRemainingBudgetMs() > minBudgetBufferMs) {
+              attempt += 1;
+
+              try {
+                const res = await fetch(url, {
+                  method: 'POST',
+                  headers: {
+                    'Accept': 'application/vnd.github+json',
+                    'Authorization': `Bearer ${process.env.GH_TOKEN}`,
+                    'X-GitHub-Api-Version': '2022-11-28',
+                  },
+                  body: JSON.stringify({
+                    ref: 'master',
+                    inputs: { buildSha },
+                  }),
+                });
+
+                if (res.ok) {
+                  console.log(`Dispatched build workflow for ${buildSha} on attempt ${attempt}.`);
+                  return { ok: true };
+                }
+
+                const text = await res.text();
+                const message = formatDispatchError(buildSha, `${res.status} ${res.statusText} ${text}`);
+                if (!transientStatuses.has(res.status)) {
+                  throw new Error(message);
+                }
+
+                const delayMs = calculateRetryDelay(attempt);
+                if (delayMs + minBudgetBufferMs > getRemainingBudgetMs()) {
+                  console.warn(`${message}. Treating this as transient and deferring the remaining builds to the next poll.`);
+                  return { ok: false, transient: true };
+                }
+
+                console.warn(`${message}. Retrying in ${Math.ceil(delayMs / 1000)}s.`);
+                await sleep(delayMs);
+              } catch (error) {
+                if (!isTransientError(error)) {
+                  throw error;
+                }
+
+                const message = formatDispatchError(buildSha, `${error.name}${error.message ? `: ${error.message}` : ''}`);
+                const delayMs = calculateRetryDelay(attempt);
+                if (delayMs + minBudgetBufferMs > getRemainingBudgetMs()) {
+                  console.warn(`${message}. Treating this as transient and deferring the remaining builds to the next poll.`);
+                  return { ok: false, transient: true };
+                }
+
+                console.warn(`${message}. Retrying in ${Math.ceil(delayMs / 1000)}s.`);
+                await sleep(delayMs);
+              }
             }
+
+            console.warn(`Dispatch budget exhausted before ${buildSha} could be queued. Deferring the remaining builds to the next poll.`);
+            return { ok: false, transient: true };
           }
 
           (async () => {
             for (const sha of builds) {
               console.log(`Dispatching build workflow for ${sha}...`);
-              await dispatch(sha);
+              const result = await dispatch(sha);
+              if (result?.transient) {
+                break;
+              }
             }
           })().catch((err) => {
             console.error(err);
