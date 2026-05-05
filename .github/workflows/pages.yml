@@ -151,7 +151,7 @@ jobs:
           const transientStatuses = new Set([408, 429, 500, 502, 503, 504]);
           const transientErrorNames = new Set(['AbortError', 'ConnectTimeoutError', 'HeadersTimeoutError']);
           const transientErrorCodes = new Set(['UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_HEADERS_TIMEOUT', 'UND_ERR_SOCKET']);
-          // Keep this below the 1 minute job timeout so GitHub has time to clean up.
+          // Keep this below jobs.poll.timeout-minutes so GitHub has time to clean up.
           const dispatchBudgetMs = 45000;
           const minBudgetBufferMs = 1000;
           const dispatchStartedAt = Date.now();
@@ -166,6 +166,14 @@ jobs:
             const isKnownTransientErrorName = transientErrorNames.has(error.name);
             const hasTransientErrorCode = transientErrorCodes.has(error.code) || transientErrorCodes.has(error.cause?.code);
             return isFetchFailedTypeError || isKnownTransientErrorName || hasTransientErrorCode;
+          }
+
+          function calculateRetryDelay(attempt) {
+            return Math.min(5000 * attempt, 15000);
+          }
+
+          function formatDispatchError(buildSha, details) {
+            return `Dispatch failed for ${buildSha}: ${details}`;
           }
 
           async function dispatch(buildSha) {
@@ -195,12 +203,12 @@ jobs:
                 }
 
                 const text = await res.text();
-                const message = `Dispatch failed for ${buildSha}: ${res.status} ${res.statusText} ${text}`;
+                const message = formatDispatchError(buildSha, `${res.status} ${res.statusText} ${text}`);
                 if (!transientStatuses.has(res.status)) {
                   throw new Error(message);
                 }
 
-                const delayMs = Math.min(5000 * attempt, 15000);
+                const delayMs = calculateRetryDelay(attempt);
                 if (delayMs + minBudgetBufferMs > getRemainingBudgetMs()) {
                   console.warn(`${message}. Treating this as transient and deferring the remaining builds to the next poll.`);
                   return { ok: false, transient: true };
@@ -213,8 +221,8 @@ jobs:
                   throw error;
                 }
 
-                const message = `Dispatch failed for ${buildSha}: ${error.name}${error.message ? `: ${error.message}` : ''}`;
-                const delayMs = Math.min(5000 * attempt, 15000);
+                const message = formatDispatchError(buildSha, `${error.name}${error.message ? `: ${error.message}` : ''}`);
+                const delayMs = calculateRetryDelay(attempt);
                 if (delayMs + minBudgetBufferMs > getRemainingBudgetMs()) {
                   console.warn(`${message}. Treating this as transient and deferring the remaining builds to the next poll.`);
                   return { ok: false, transient: true };
