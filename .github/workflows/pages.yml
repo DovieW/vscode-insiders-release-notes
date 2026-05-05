@@ -148,7 +148,7 @@ jobs:
             process.exit(0);
           }
 
-          const transientStatuses = new Set([408, 425, 429, 500, 502, 503, 504]);
+          const transientStatuses = new Set([408, 429, 500, 502, 503, 504]);
           const transientErrorNames = new Set(['AbortError', 'ConnectTimeoutError', 'HeadersTimeoutError']);
           const transientErrorCodes = new Set(['UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_HEADERS_TIMEOUT', 'UND_ERR_SOCKET']);
           // Keep this below the 1 minute job timeout so GitHub has time to clean up.
@@ -172,7 +172,7 @@ jobs:
             const url = `https://api.github.com/repos/${process.env.GH_REPO}/actions/workflows/build.yml/dispatches`;
             let attempt = 0;
 
-            while (getRemainingBudgetMs() > 0) {
+            while (getRemainingBudgetMs() > minBudgetBufferMs) {
               attempt += 1;
 
               try {
@@ -201,7 +201,7 @@ jobs:
                 }
 
                 const delayMs = Math.min(5000 * attempt, 15000);
-                if (delayMs + minBudgetBufferMs >= getRemainingBudgetMs()) {
+                if (delayMs + minBudgetBufferMs > getRemainingBudgetMs()) {
                   console.warn(`${message}. Treating this as transient and deferring the remaining builds to the next poll.`);
                   return { ok: false, transient: true };
                 }
@@ -215,7 +215,7 @@ jobs:
 
                 const message = `Dispatch failed for ${buildSha}: ${error.name}${error.message ? `: ${error.message}` : ''}`;
                 const delayMs = Math.min(5000 * attempt, 15000);
-                if (delayMs + minBudgetBufferMs >= getRemainingBudgetMs()) {
+                if (delayMs + minBudgetBufferMs > getRemainingBudgetMs()) {
                   console.warn(`${message}. Treating this as transient and deferring the remaining builds to the next poll.`);
                   return { ok: false, transient: true };
                 }
