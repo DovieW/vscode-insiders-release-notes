@@ -413,7 +413,7 @@ function buildAiPrompt({ repo, defaultBranch, fromSha, toSha, compareUrl, pullRe
     // ## ✨ NEW
     // - [#123](url) **Title**
     //   > explainer...
-    labelOptions: ["add", "fix", "refactor", "upgrade"],
+    labelOptions: ["add", "fix", "refactor", "upgrade", "dev"],
     pullRequests: prPayload,
   };
 
@@ -423,9 +423,15 @@ function buildAiPrompt({ repo, defaultBranch, fromSha, toSha, compareUrl, pullRe
       "Given a list of merged PRs for a single build, generate ONE short explainer per PR. " +
       "Output format: STRICT JSON object ONLY (no markdown, no code fences). " +
       "Keys are PR numbers as strings. Values are objects with exactly: { label, explainer }. " +
-      "label must be one of: add, fix, refactor, upgrade. " +
+      "label must be one of: add, fix, refactor, upgrade, dev. " +
       "explainer must be 1-2 sentences. " +
-      "Rules: (1) Keep explainers plain-English and concrete (what changed + who benefits). " +
+      "Classification rules: add = user-facing product features, UI capabilities, public APIs, settings, commands, or behavior users directly access. " +
+      "fix = bug fixes, crash fixes, regressions, correctness, reliability, accessibility wording fixes, or behavior corrections. " +
+      "refactor = code cleanup, removal, restructuring, or internal maintenance that is not primarily tests/tooling and not user-visible. " +
+      "upgrade = dependency, package, engine, version, distro, or toolchain upgrades. " +
+      "dev = tests, fixtures, CI, smoke tests, mock servers, internal scripts, diagnostics, local-only tooling, and maintainer-focused changes. " +
+      "Precedence: if a PR is mainly tests/fixtures/mock server/CI/dev-only and has no direct user-facing behavior, choose dev, not add. " +
+      "Explainer rules: (1) Keep explainers plain-English and concrete. If user-facing, explain the direct user benefit; if dev-only/internal, say so plainly and do not imply product-user benefit. " +
       "(2) Do NOT mention @copilot. Some PRs include 'copilot_summaries' - treat them as helpful context. " +
       "(3) Avoid jargon. If you must use a technical term, add a tiny parenthetical. " +
       "(4) Do not hallucinate: if context is unclear, say something like 'Internal maintenance/refactoring; no user-visible change expected.' " +
@@ -474,6 +480,7 @@ function normalizePrChangeLabel(labelRaw) {
   if (v === "fix" || v === "fixed" || v === "bugfix" || v === "bug") return "fix";
   if (v === "refactor" || v === "cleanup" || v === "internal") return "refactor";
   if (v === "upgrade" || v === "bump" || v === "deps" || v === "dependency") return "upgrade";
+  if (v === "dev" || v === "developer" || v === "test" || v === "tests" || v === "ci" || v === "tooling") return "dev";
   return "refactor";
 }
 
@@ -497,6 +504,7 @@ function labelToEmoji(label) {
   // - fix      -> 🐛
   // - refactor -> 🔨
   // - upgrade  -> ⬆️
+  // - dev      -> 🛠️
   switch (String(label || "").toLowerCase()) {
     case "add":
       return "✨";
@@ -506,6 +514,8 @@ function labelToEmoji(label) {
       return "🔨";
     case "upgrade":
       return "⬆️";
+    case "dev":
+      return "🛠️";
     default:
       return "🔨";
   }
@@ -523,16 +533,44 @@ function labelToSectionHeading(label) {
       return "## 🔨 REFACTORS";
     case "upgrade":
       return "## ⬆️ UPGRADES";
+    case "dev":
+      return "## 🛠️ DEVELOPER UPDATES";
     default:
       return "## 🔨 REFACTORS";
   }
+}
+
+function prTextForClassification(pr) {
+  return [
+    pr?.title,
+    pr?.body,
+    ...(Array.isArray(pr?.labels) ? pr.labels.map((l) => typeof l === "string" ? l : l?.name) : []),
+  ].filter(Boolean).join("\n").toLowerCase();
+}
+
+function shouldPreferDevLabel(pr) {
+  const text = prTextForClassification(pr);
+  if (!text) return false;
+
+  const devPattern = /\b(unit tests?|regression tests?|test fixtures?|fixtures?|smoke tests?|mock servers?|dev-only|developer-only|local-only|ci|pipeline|test coverage|test util(?:ity|ities)?|test helpers?|diagnostics?|internal scripts?|maintainer-focused|local development)\b/;
+  if (!devPattern.test(text)) return false;
+
+  const userFacingPattern = /\b(user-facing|users? can|settings?|commands?|menus?|buttons?|ui|public api|extension api|accessibility|keyboard|screen readers?|editor|terminal|debugger|notebook|explorer|marketplace|chat|browser)\b/;
+  return !userFacingPattern.test(text);
+}
+
+function applyDeterministicLabelGuards({ pr, entry }) {
+  if (shouldPreferDevLabel(pr)) {
+    return { ...entry, label: "dev" };
+  }
+  return entry;
 }
 
 function buildExplainersMarkdown({ pullRequests, explainersByNumber }) {
   const prs = Array.isArray(pullRequests) ? pullRequests : [];
   if (!prs.length) return "";
 
-  const order = ["add", "fix", "refactor", "upgrade"];
+  const order = ["add", "fix", "refactor", "upgrade", "dev"];
   const buckets = new Map(order.map((k) => [k, []]));
 
   const lines = [];
@@ -541,7 +579,7 @@ function buildExplainersMarkdown({ pullRequests, explainersByNumber }) {
   for (const pr of prs) {
     const n = pr?.number;
     const entryRaw = n != null ? explainersByNumber?.[String(n)] : null;
-    const entry = normalizeExplainerEntry(entryRaw);
+    const entry = applyDeterministicLabelGuards({ pr, entry: normalizeExplainerEntry(entryRaw) });
     const key = buckets.has(entry.label) ? entry.label : "refactor";
     buckets.get(key).push({ pr, entry });
   }
