@@ -2,8 +2,10 @@
 
 import "dotenv/config";
 import OpenAI from "openai";
+import { zodTextFormat } from "openai/helpers/zod";
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { z } from "zod";
 import { fetchJsonWithRetry } from "./fetch-json-with-retry.mjs";
 
 const DATA_DIR = new URL("../data/", import.meta.url).pathname;
@@ -21,6 +23,9 @@ const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-5.4-nano";
 const DEFAULT_MAX_PRS_PER_BUILD = 100;
 const MAX_PRS_PER_BUILD = getMaxPrsPerBuild();
+const DEFAULT_PR_BATCH_SIZE = 10;
+const PR_BATCH_SIZE = getPositiveIntegerEnv("PR_BATCH_SIZE", DEFAULT_PR_BATCH_SIZE);
+const ENABLE_TOP_SUMMARY = getBooleanEnv("ENABLE_TOP_SUMMARY", true);
 
 const OUT_DIR = join(new URL("../", import.meta.url).pathname, ".out");
 const OUT_RELEASE_NOTES_PATH = join(OUT_DIR, "release-notes.md");
@@ -34,6 +39,19 @@ const INSIDERS_COMMITS_FEED = "https://update.code.visualstudio.com/api/commits/
 
 const INSIDERS_UPDATE_API_BASE = "https://update.code.visualstudio.com/api/update";
 const INSIDERS_LATEST_AVAILABLE_UPDATE_URL = "https://update.code.visualstudio.com/api/update/win32-x64-user/insider/latest";
+const LABEL_OPTIONS = ["add", "fix", "refactor", "upgrade", "dev"];
+const LABEL_ENUM = z.enum(LABEL_OPTIONS);
+const EXPLAINER_SCHEMA = z.object({
+  prNumber: z.number().int().positive(),
+  label: LABEL_ENUM,
+  explainer: z.string(),
+});
+const EXPLAINERS_BATCH_SCHEMA = z.object({
+  items: z.array(EXPLAINER_SCHEMA),
+});
+const TOP_SUMMARY_SCHEMA = z.object({
+  items: z.array(z.string().min(1).max(220)).max(6),
+});
 
 function getMaxPrsPerBuild() {
   const raw = String(process.env.MAX_PRS_PER_BUILD || "").trim();
@@ -45,6 +63,26 @@ function getMaxPrsPerBuild() {
   }
 
   return value;
+}
+
+function getPositiveIntegerEnv(name, defaultValue) {
+  const raw = String(process.env[name] || "").trim();
+  if (!raw) return defaultValue;
+
+  const value = Number.parseInt(raw, 10);
+  if (!Number.isInteger(value) || value <= 0) {
+    throw new Error(`${name} must be a positive integer, got '${raw}'.`);
+  }
+
+  return value;
+}
+
+function getBooleanEnv(name, defaultValue) {
+  const raw = String(process.env[name] || "").trim().toLowerCase();
+  if (!raw) return defaultValue;
+  if (["1", "true", "yes", "on", "enabled"].includes(raw)) return true;
+  if (["0", "false", "no", "off", "disabled"].includes(raw)) return false;
+  throw new Error(`${name} must be a boolean-like value, got '${raw}'.`);
 }
 
 function shortSha(sha) {
@@ -344,7 +382,32 @@ function extractTokenUsageFromOpenAiResponse(response) {
 function buildTokenUsageMarkdown(usage) {
   if (!usage || usage.inputTokens == null || usage.outputTokens == null) return "";
 
-  return `Token usage - ${usage.inputTokens} Out: ${usage.outputTokens}`;
+  return `Token usage - In: ${usage.inputTokens} Out: ${usage.outputTokens}`;
+}
+
+function addTokenUsage(total, next) {
+  if (!next) return total;
+  if (!total) {
+    return {
+      inputTokens: next.inputTokens ?? null,
+      outputTokens: next.outputTokens ?? null,
+      totalTokens: next.totalTokens ?? null,
+    };
+  }
+
+  return {
+    inputTokens: (total.inputTokens ?? 0) + (next.inputTokens ?? 0),
+    outputTokens: (total.outputTokens ?? 0) + (next.outputTokens ?? 0),
+    totalTokens: (total.totalTokens ?? 0) + (next.totalTokens ?? 0),
+  };
+}
+
+function chunkArray(items, size) {
+  const chunks = [];
+  for (let i = 0; i < items.length; i += size) {
+    chunks.push(items.slice(i, i + size));
+  }
+  return chunks;
 }
 
 async function rebuildBuildIndexes(repo) {
@@ -391,7 +454,7 @@ async function rebuildBuildIndexes(repo) {
   await writeFile(HOME_PATH, home, "utf8");
 }
 
-function buildAiPrompt({ repo, defaultBranch, fromSha, toSha, compareUrl, pullRequests }) {
+function buildExplainersPrompt({ repo, defaultBranch, fromSha, toSha, compareUrl, pullRequests, batchIndex, batchCount }) {
   // Keep it deterministic. Output should be machine-mergeable.
   const prPayload = (pullRequests || []).map((pr) => ({
     number: pr.number,
@@ -408,12 +471,13 @@ function buildAiPrompt({ repo, defaultBranch, fromSha, toSha, compareUrl, pullRe
     repo,
     defaultBranch,
     range: { fromSha, toSha, compareUrl },
+    batch: { index: batchIndex + 1, total: batchCount },
     // The final markdown is assembled programmatically. The model only supplies the per-PR label + explainer.
     // Expected rendering (grouped by label):
     // ## ✨ NEW
     // - [#123](url) **Title**
     //   > explainer...
-    labelOptions: ["add", "fix", "refactor", "upgrade", "dev"],
+    labelOptions: LABEL_OPTIONS,
     pullRequests: prPayload,
   };
 
@@ -421,8 +485,8 @@ function buildAiPrompt({ repo, defaultBranch, fromSha, toSha, compareUrl, pullRe
     instructions:
       "You write simple, easy-to-understand explainers for developers. " +
       "Given a list of merged PRs for a single build, generate ONE short explainer per PR. " +
-      "Output format: STRICT JSON object ONLY (no markdown, no code fences). " +
-      "Keys are PR numbers as strings. Values are objects with exactly: { label, explainer }. " +
+      "Return exactly one item for every PR in the batch. " +
+      "Each item must include: prNumber, label, explainer. " +
       "label must be one of: add, fix, refactor, upgrade, dev. " +
       "explainer must be 1-2 sentences. " +
       "Classification rules: add = user-facing product features, UI capabilities, public APIs, settings, commands, or behavior users directly access. " +
@@ -440,18 +504,31 @@ function buildAiPrompt({ repo, defaultBranch, fromSha, toSha, compareUrl, pullRe
   };
 }
 
-function extractJsonObjectFromText(raw) {
-  const s = String(raw || "").trim();
-  if (!s) return null;
-  const first = s.indexOf("{");
-  const last = s.lastIndexOf("}");
-  if (first === -1 || last === -1 || last <= first) return null;
-  const slice = s.slice(first, last + 1);
-  try {
-    return JSON.parse(slice);
-  } catch {
-    return null;
-  }
+function buildTopSummaryPrompt({ repo, defaultBranch, fromSha, toSha, compareUrl, explainersMd, pullRequests, explainersByNumber }) {
+  const summaryInput = {
+    repo,
+    defaultBranch,
+    range: { fromSha, toSha, compareUrl },
+    instruction: "Pick the most interesting changes for users. Prefer major new features and major fixes. Ignore dev-only/internal work unless nothing else is notable.",
+    documentMarkdown: explainersMd,
+    pullRequests: (pullRequests || []).map((pr) => ({
+      number: pr.number,
+      title: pr.title,
+      url: pr.html_url,
+      label: explainersByNumber?.[String(pr.number)]?.label || null,
+      explainer: explainersByNumber?.[String(pr.number)]?.explainer || null,
+    })),
+  };
+
+  return {
+    instructions:
+      "You are writing the top summary for a VS Code Insiders changelog. " +
+      "Return 3 to 6 concise bullets covering the most important user-facing additions and fixes. " +
+      "Prefer substantial new features, meaningful workflow improvements, and important bug fixes. " +
+      "Avoid maintainers-only CI, tests, refactors, upgrades, and vague filler unless there is nothing more user-relevant. " +
+      "Each bullet must stand alone, be concrete, and stay under 220 characters.",
+    input: JSON.stringify(summaryInput),
+  };
 }
 
 function sanitizeExplainerForMarkdown(text) {
@@ -615,6 +692,37 @@ function buildExplainersMarkdown({ pullRequests, explainersByNumber }) {
   return lines.join("\n").trimEnd() + "\n";
 }
 
+function buildTopSummaryMarkdown(summaryItems) {
+  const items = Array.isArray(summaryItems)
+    ? summaryItems.map((item) => String(item || "").trim()).filter(Boolean)
+    : [];
+  if (!items.length) return "";
+
+  const lines = ["## Summary", ""];
+  for (const item of items) {
+    lines.push(`- ${sanitizeExplainerForMarkdown(item)}`);
+  }
+  lines.push("");
+  return lines.join("\n");
+}
+
+async function parseStructuredResponse({ client, instructions, input, schema, schemaName }) {
+  const response = await client.responses.parse({
+    model: OPENAI_MODEL,
+    instructions,
+    input,
+    text: {
+      format: zodTextFormat(schema, schemaName),
+      verbosity: "low",
+    },
+  });
+
+  return {
+    parsed: response?.output_parsed,
+    tokenUsage: extractTokenUsageFromOpenAiResponse(response),
+  };
+}
+
 async function generateAiExplainers({ repo, defaultBranch, fromSha, toSha, compareUrl, pullRequests }) {
   if (!OPENAI_API_KEY) {
     throw new Error("OPENAI_API_KEY is required to generate explainers.");
@@ -624,11 +732,73 @@ async function generateAiExplainers({ repo, defaultBranch, fromSha, toSha, compa
   }
 
   const client = new OpenAI({ apiKey: OPENAI_API_KEY });
-  const { instructions, input } = buildAiPrompt({ repo, defaultBranch, fromSha, toSha, compareUrl, pullRequests });
+  const explainersByNumber = {};
+  let tokenUsage = null;
+  const batches = chunkArray(pullRequests, PR_BATCH_SIZE);
 
-  // Debug artifacts: write the exact prompts we send to the API.
-  // - `instructions` acts like a system/developer prompt (behavior)
-  // - `input` is the user payload (the PR details JSON)
+  for (const [batchIndex, batch] of batches.entries()) {
+    const { instructions, input } = buildExplainersPrompt({
+      repo,
+      defaultBranch,
+      fromSha,
+      toSha,
+      compareUrl,
+      pullRequests: batch,
+      batchIndex,
+      batchCount: batches.length,
+    });
+
+    await writeFile(OUT_SYSTEM_PROMPT_PATH, String(instructions || "").trim() + "\n", "utf8");
+    try {
+      const pretty = JSON.stringify(JSON.parse(input), null, 2);
+      await writeFile(OUT_USER_PROMPT_PATH, pretty + "\n", "utf8");
+    } catch {
+      await writeFile(OUT_USER_PROMPT_PATH, String(input || "").trim() + "\n", "utf8");
+    }
+
+    const { parsed, tokenUsage: batchUsage } = await parseStructuredResponse({
+      client,
+      instructions,
+      input,
+      schema: EXPLAINERS_BATCH_SCHEMA,
+      schemaName: "pr_explainers_batch",
+    });
+    tokenUsage = addTokenUsage(tokenUsage, batchUsage);
+
+    const items = Array.isArray(parsed?.items) ? parsed.items : [];
+    const returnedNumbers = new Set(items.map((item) => item.prNumber));
+    for (const pr of batch) {
+      if (!returnedNumbers.has(pr.number)) {
+        throw new Error(`OpenAI did not return an explainer for PR #${pr.number} in batch ${batchIndex + 1}.`);
+      }
+    }
+
+    for (const item of items) {
+      explainersByNumber[String(item.prNumber)] = {
+        label: item.label,
+        explainer: item.explainer,
+      };
+    }
+  }
+
+  return { explainersByNumber, tokenUsage };
+}
+
+async function generateTopSummary({ repo, defaultBranch, fromSha, toSha, compareUrl, pullRequests, explainersByNumber, explainersMd }) {
+  if (!ENABLE_TOP_SUMMARY) return { summaryItems: [], tokenUsage: null };
+
+  const client = new OpenAI({ apiKey: OPENAI_API_KEY });
+  const { instructions, input } = buildTopSummaryPrompt({
+    repo,
+    defaultBranch,
+    fromSha,
+    toSha,
+    compareUrl,
+    explainersMd,
+    pullRequests,
+    explainersByNumber,
+  });
+
   await writeFile(OUT_SYSTEM_PROMPT_PATH, String(instructions || "").trim() + "\n", "utf8");
   try {
     const pretty = JSON.stringify(JSON.parse(input), null, 2);
@@ -637,28 +807,18 @@ async function generateAiExplainers({ repo, defaultBranch, fromSha, toSha, compa
     await writeFile(OUT_USER_PROMPT_PATH, String(input || "").trim() + "\n", "utf8");
   }
 
-  const response = await client.responses.create({
-    model: OPENAI_MODEL,
+  const { parsed, tokenUsage } = await parseStructuredResponse({
+    client,
     instructions,
     input,
+    schema: TOP_SUMMARY_SCHEMA,
+    schemaName: "top_summary",
   });
 
-  const tokenUsage = extractTokenUsageFromOpenAiResponse(response);
-
-  const raw = (response?.output_text || "").trim();
-  const json = extractJsonObjectFromText(raw);
-  if (!json || typeof json !== "object") throw new Error("OpenAI did not return a valid JSON object for explainers.");
-
-  // Validate shape (best-effort): values should be objects with {label, explainer}.
-  // We keep backwards compatibility with older string-only values.
-  for (const [k, v] of Object.entries(json)) {
-    if (typeof v === "string") continue;
-    if (!v || typeof v !== "object") throw new Error(`Invalid explainer value for PR ${k}; expected object or string.`);
-    if (typeof v.explainer !== "string") throw new Error(`Invalid explainer for PR ${k}; expected string.`);
-    if (typeof v.label !== "string") throw new Error(`Invalid label for PR ${k}; expected string.`);
-  }
-
-  return { explainersByNumber: json, tokenUsage };
+  return {
+    summaryItems: Array.isArray(parsed?.items) ? parsed.items : [],
+    tokenUsage,
+  };
 }
 
 async function collectMergedPullRequestsForRange({ repo, commits }) {
@@ -761,6 +921,7 @@ function buildPageMarkdown({
   buildTitleUtc,
   installersMd,
   tokensMd,
+  summaryMd,
   explainersMd,
 }) {
   const title = mdEscapeInline(buildTitleUtc);
@@ -769,6 +930,7 @@ function buildPageMarkdown({
     : "";
 
   const body = [
+    (summaryMd || "").trim(),
     (explainersMd || "").trim(),
     (tokensMd || "").trim(),
     (installersMd || "").trim(),
@@ -858,7 +1020,7 @@ async function main() {
     );
   }
 
-  const { explainersByNumber, tokenUsage } = await generateAiExplainers({
+  const { explainersByNumber, tokenUsage: explainersUsage } = await generateAiExplainers({
     repo: TARGET_REPO,
     defaultBranch,
     fromSha: previousSha,
@@ -868,6 +1030,18 @@ async function main() {
   });
 
   const explainersMd = buildExplainersMarkdown({ pullRequests, explainersByNumber });
+  const { summaryItems, tokenUsage: summaryUsage } = await generateTopSummary({
+    repo: TARGET_REPO,
+    defaultBranch,
+    fromSha: previousSha,
+    toSha: buildSha,
+    compareUrl,
+    pullRequests,
+    explainersByNumber,
+    explainersMd,
+  });
+  const summaryMd = buildTopSummaryMarkdown(summaryItems);
+  const tokenUsage = addTokenUsage(explainersUsage, summaryUsage);
 
   const installers = await getInsidersInstallerLinksForBuild(buildSha);
   const installersMd = buildInstallersMarkdown(installers);
@@ -887,6 +1061,7 @@ async function main() {
     buildTitleUtc,
     installersMd,
     tokensMd,
+    summaryMd,
     explainersMd,
   });
 
@@ -904,6 +1079,7 @@ async function main() {
   // Emit workflow artifacts for creating a GitHub Release.
   // We keep AI notes as the main body and append official installer links (as links, not binaries).
   const releaseNotes = [
+    (summaryMd || "").trim(),
     (explainersMd || "").trim(),
     (installersMd || "").trim(),
     (tokensMd || "").trim(),
