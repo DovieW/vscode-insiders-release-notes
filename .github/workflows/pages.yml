@@ -30,7 +30,7 @@ jobs:
         with:
           node-version: 20
 
-      - name: Determine builds to process (max 3)
+      - name: Determine latest build to process
         id: builds
         env:
           INSIDERS_COMMITS_FEED: https://update.code.visualstudio.com/api/commits/insider
@@ -92,26 +92,18 @@ jobs:
               }
             }
 
-            // Only consider the subset of commits that are <= latest available build.
-            // commits[0..availableIdx-1] are newer than what's available and should be ignored.
-            const availableCommits = commits.slice(availableIdx);
-
             let builds = [];
             if (!last) {
-              builds = [availableCommits[0]]; // bootstrap: generate latest available build
-            } else {
-              const idx = availableCommits.indexOf(last);
-              if (idx === -1) {
-                // If we've somehow processed a build newer than what's currently available, do nothing.
-                const globalIdx = commits.indexOf(last);
-                if (globalIdx !== -1 && globalIdx < availableIdx) {
-                  builds = [];
-                } else {
-                  builds = [availableCommits[0]];
-                }
+              builds = [availableSha]; // bootstrap: generate latest available build
+            } else if (last !== availableSha) {
+              // Never replay builds missed during an outage. Jump straight to the latest
+              // installable build once generation works again. If the processed build is
+              // newer than what the update endpoint currently reports, do not move backward.
+              const lastIdx = commits.indexOf(last);
+              if (lastIdx === -1 || lastIdx > availableIdx) {
+                builds = [availableSha];
               } else {
-                const unprocessedNewer = availableCommits.slice(0, idx); // newest-first
-                builds = unprocessedNewer.reverse().slice(0, 3); // oldest-first, cap 3
+                console.warn(`Last processed build ${last.slice(0,7)} is newer than latest available ${availableSha.slice(0,7)}; skipping.`);
               }
             }
 
