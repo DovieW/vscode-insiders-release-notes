@@ -1,12 +1,17 @@
 #!/usr/bin/env node
 
 import "dotenv/config";
-import OpenAI from "openai";
 import { zodTextFormat } from "openai/helpers/zod";
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
 import { fetchJsonWithRetry } from "./fetch-json-with-retry.mjs";
+import {
+  createOpenAIClient,
+  getOpenAIServiceTier,
+  OPENAI_MAX_RETRIES,
+  OPENAI_REQUEST_TIMEOUT_MS,
+} from "./openai-client.mjs";
 
 const DATA_DIR = new URL("../data/", import.meta.url).pathname;
 const STATE_PATH = join(DATA_DIR, "insiders-state.json");
@@ -21,6 +26,7 @@ const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-5.4-nano";
+const OPENAI_SERVICE_TIER = getOpenAIServiceTier();
 const DEFAULT_MAX_PRS_PER_BUILD = 100;
 const MAX_PRS_PER_BUILD = getMaxPrsPerBuild();
 const DEFAULT_PR_BATCH_SIZE = 10;
@@ -709,6 +715,7 @@ function buildTopSummaryMarkdown(summaryItems) {
 async function parseStructuredResponse({ client, instructions, input, schema, schemaName }) {
   const response = await client.responses.parse({
     model: OPENAI_MODEL,
+    service_tier: OPENAI_SERVICE_TIER,
     instructions,
     input,
     text: {
@@ -731,7 +738,11 @@ async function generateAiExplainers({ repo, defaultBranch, fromSha, toSha, compa
     throw new Error("No PRs found for this build range; refusing to generate empty explainers.");
   }
 
-  const client = new OpenAI({ apiKey: OPENAI_API_KEY });
+  console.log(
+    `OpenAI configuration: model=${OPENAI_MODEL} service_tier=${OPENAI_SERVICE_TIER} ` +
+    `timeout=${OPENAI_REQUEST_TIMEOUT_MS}ms max_retries=${OPENAI_MAX_RETRIES}`,
+  );
+  const client = createOpenAIClient({ apiKey: OPENAI_API_KEY });
   const explainersByNumber = {};
   let tokenUsage = null;
   const batches = chunkArray(pullRequests, PR_BATCH_SIZE);
@@ -787,7 +798,7 @@ async function generateAiExplainers({ repo, defaultBranch, fromSha, toSha, compa
 async function generateTopSummary({ repo, defaultBranch, fromSha, toSha, compareUrl, pullRequests, explainersByNumber, explainersMd }) {
   if (!ENABLE_TOP_SUMMARY) return { summaryItems: [], tokenUsage: null };
 
-  const client = new OpenAI({ apiKey: OPENAI_API_KEY });
+  const client = createOpenAIClient({ apiKey: OPENAI_API_KEY });
   const { instructions, input } = buildTopSummaryPrompt({
     repo,
     defaultBranch,

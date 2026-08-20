@@ -12,6 +12,7 @@
     "zod": "^3.23.8"
   },
   "scripts": {
+    "test": "node --test scripts/*.test.mjs",
     "update-data": "node scripts/update-data.mjs",
     "preview:latest": "node scripts/update-data.mjs --latest --preview",
     "docs:dev": "vitepress dev docs",
